@@ -1,4 +1,4 @@
-﻿# TrendFlow EA — MetaTrader 5 Expert Advisor
+# TrendFlow EA — MetaTrader 5 Expert Advisor
 
 > **Version:** 4.0 · **File:** `TrendFlow_EA_v1.00.mq5` · **Platform:** MetaTrader 5
 
@@ -22,14 +22,15 @@
    - [Break-Even](#break-even)
    - [SL-Flip Recovery](#sl-flip-recovery)
    - [Profit Target](#profit-target)
-5. [TP / SL Modes](#tp--sl-modes)
-6. [Lot Sizing](#lot-sizing)
-7. [Input Parameter Reference](#input-parameter-reference)
-8. [Trade Entry Logger](#trade-entry-logger)
-9. [Live Dashboard](#live-dashboard)
-10. [Installation](#installation)
-11. [Recommended Workflows](#recommended-workflows)
-12. [Notes & Caveats](#notes--caveats)
+5. [Goal Tracker](#goal-tracker)
+6. [TP / SL Modes](#tp--sl-modes)
+7. [Lot Sizing](#lot-sizing)
+8. [Input Parameter Reference](#input-parameter-reference)
+9. [Trade Entry Logger](#trade-entry-logger)
+10. [Live Dashboard](#live-dashboard)
+11. [Installation](#installation)
+12. [Recommended Workflows](#recommended-workflows)
+13. [Notes & Caveats](#notes--caveats)
 
 ---
 
@@ -204,9 +205,53 @@ When an EA position is closed by its stop-loss **and** ADX at that moment is >= 
 
 ### Profit Target
 
-*Toggle:* `PT_On` | *Parameter:* `PT_Pct`
+*Toggle:* `PT_On` | *Parameter:* `PT_Amt`
 
-Closes **all EA positions on the current symbol** when their combined floating P&L (profit + swap + commission) reaches `PT_Pct%` of the account balance. Positions on other symbols are unaffected.
+Closes **all EA positions on the current symbol** when their combined floating P&L (profit + swap + commission) reaches a **fixed dollar amount** (`PT_Amt`). Positions on other symbols are unaffected.
+
+> **Changed from v3:** Previously used `PT_Pct` (a percentage of account balance). The new `PT_Amt` is an absolute dollar figure, making the trigger predictable regardless of account size changes.
+
+---
+
+## Goal Tracker
+
+*Toggle:* `Goal_On` | *Parameters:* `Goal_Schedule`, `Goal_Monthly`, `Goal_LotScale`
+
+The Goal Tracker is a **progressive risk-management system** that automatically reduces lot size once a daily profit target has been met, protecting gains for the rest of the day.
+
+### How It Works
+
+1. **Monthly target is set** via `Goal_Monthly` (e.g. $500).
+2. **Daily target is derived dynamically** each tick:
+   ```
+   Daily target = (Goal_Monthly - month PnL so far) / trading days remaining this month
+   ```
+   This means the daily target automatically **catches up** if earlier days were below target, and **relaxes** if the month is ahead of pace.
+3. **Weekly target** displayed on dashboard = `Daily target × days per week` (5 or 7 depending on schedule).
+4. Once `Today's P&L (closed + floating) >= daily target`, all **new lots are multiplied by `Goal_LotScale`** (e.g. 0.5 = half size). Existing open positions are not affected.
+5. On **weekends** (Saturday/Sunday), when `Goal_Schedule = Weekdays`, the EA's bar-open gate is skipped entirely — no new entries are placed.
+
+### P&L Calculation
+
+| Component | Included |
+|-----------|----------|
+| Closed deals (this symbol + Magic) | Yes |
+| Open floating P&L (this symbol + Magic) | Yes |
+| Swap & commission | Yes |
+| Other symbols / other EAs | No |
+
+### Dashboard — GOAL TRACKER section
+
+When `Goal_On = true`, the dashboard shows four live rows between ACCOUNT and SETTINGS:
+
+| Row | Content | Color |
+|-----|---------|-------|
+| Monthly | Target vs made so far this month | Green ≥ target · Yellow ≥ 50% · Grey below |
+| This Week | Weekly target + remaining monthly amount | Grey |
+| Daily | Today's per-day target + trading days left | Grey |
+| Today | Today's P&L vs daily target | Green = hit · Yellow ≥ 50% · Red < 50% |
+
+When `Goal_On = false`, the section shows `DISABLED`.
 
 ---
 
@@ -233,6 +278,8 @@ Controlled by `LotMode`:
 | **Equity %** (`LOT_PERCENT`) | `risk_amount = equity x EquityPct / 100`; lot is sized so that `SL_Pts` points of adverse movement costs exactly `risk_amount` |
 
 The result is always normalized to the broker's `VOLUME_MIN`, `VOLUME_MAX`, and `VOLUME_STEP` constraints.
+
+**Goal Tracker lot scaling** is applied as a final post-processing step: if `Goal_On = true` and today's P&L has already met the daily target, the computed lot is further multiplied by `Goal_LotScale` (then re-normalized to `lotStep` and `minLot`). This is a one-way reduction — it never increases lot size.
 
 ---
 
@@ -328,7 +375,16 @@ The result is always normalized to the broker's `VOLUME_MIN`, `VOLUME_MAX`, and 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `PT_On` | false | Enable profit target |
-| `PT_Pct` | 2.0 | Close all symbol positions when floating P&L reaches this % of balance |
+| `PT_Amt` | 100.0 | Close all symbol positions when floating P&L reaches this fixed $ amount |
+
+### Goal Tracker
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `Goal_On` | false | Enable Goal Tracker |
+| `Goal_Schedule` | Weekdays | Trading days used for day-count calculations: `GOAL_7DAYS` or `GOAL_WEEKDAYS` (Mon–Fri) |
+| `Goal_Monthly` | 500.0 | Monthly profit target in account currency ($) |
+| `Goal_LotScale` | 0.50 | Lot multiplier applied once the daily target is met (e.g. 0.5 = halve lot size) |
 
 ### Envelopes (Reversal Narrative)
 
@@ -434,6 +490,12 @@ A dark-themed dashboard renders in the top-left corner of the chart and updates 
 |   Equity    USD 10 043.20        |
 |   Float P&L +43.20 USD           |
 +----------------------------------+
+|  GOAL TRACKER                    |
+|   Monthly   Tgt $500  Made +$143 |
+|   This Week Wk $100  Left $357   |
+|   Daily     Day $100  3 days (5d)|
+|   Today     +$43.20 / $100  ◈    |
++----------------------------------+
 |  SETTINGS                        |
 |   Dir: BOTH  Lot: 0.10 FX  ...   |
 |   Tr: OFF  BE: OFF  PT: OFF      |
@@ -450,6 +512,13 @@ A dark-themed dashboard renders in the top-left corner of the chart and updates 
 **ADX row color coding:**
 - Green — ADX >= `ADX_Min` (TRENDING)
 - Yellow — ADX < `ADX_Min` (WEAK)
+
+**Goal Tracker — Today row color coding:**
+- Green — Daily target reached (`TARGET HIT` / `GOAL MET`)
+- Yellow — 50–99% of daily target reached
+- Red — Below 50% of daily target
+
+When `Goal_On = false` the GOAL TRACKER section shows `DISABLED`.
 
 When an SL-Flip is armed, a `FLIP ARMED: BUY (N bars)` alert appears in the SETTINGS footer in yellow.
 
@@ -499,6 +568,12 @@ When an SL-Flip is armed, a `FLIP ARMED: BUY (N bars)` alert appears in the SETT
 - `SI_On = true`, `SI_MaxCap = 3`, `SI_Step = 50`
 - `Trail_On = true`, `Trail_Trigger = 100`, `Trail_Step = 50`
 - Note: scale-in multiplies both profit potential **and** drawdown risk.
+
+### Goal-Protected Trading
+- `Goal_On = true`, `Goal_Monthly = 500.0`, `Goal_Schedule = Weekdays`
+- `Goal_LotScale = 0.5` — halves lot size once the daily target is reached
+- Pair with `PT_On = true`, `PT_Amt = 50.0` for an intraday hard stop after hitting a fixed-dollar profit
+- The daily target recalculates automatically, so underperforming days will set a higher target the next day to stay on pace for the monthly goal
 
 ---
 
