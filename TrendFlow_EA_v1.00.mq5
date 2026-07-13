@@ -1234,7 +1234,7 @@ void CheckProfitTarget()
    {
       Print("TrendFlow: Profit Target hit on ", _Symbol,
             "  Float P&L=", DoubleToString(symbolPL, 2),
-            " Target=", DoubleToString(target, 2), " → closing symbol positions.");
+            " Target=$", DoubleToString(PT_Amt, 2), " → closing symbol positions.");
       CloseAll();
    }
 }
