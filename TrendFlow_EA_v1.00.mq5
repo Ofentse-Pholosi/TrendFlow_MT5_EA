@@ -122,8 +122,8 @@ input int               SLFlip_Delay    = 5;           // Bars to wait before fi
 // ── PROFIT TARGET ─────────────────────────────────────────────────
 input group             "── PROFIT TARGET ─────────────────────────────────"
 input bool              PT_On           = false;        // Enable Profit Target
-input double            PT_Pct          = 2.0;          // Target: % of Account Balance (floating P&L)
-// Closes THIS symbol's EA positions when their combined floating P&L >= PT_Pct% of balance
+input double            PT_Amt          = 100.0;        // Target: fixed $ amount (floating P&L)
+// Closes THIS symbol's EA positions when their combined floating P&L >= PT_Amt ($)
 
 // ── ENVELOPES (REVERSAL NARRATIVE) ───────────────────────────────
 input group             "── ENVELOPES (REVERSAL NARRATIVE) ────────────────"
@@ -171,6 +171,19 @@ input double            MA60_RSI_Sell   = 70.0;        // RSI must cross below t
 // EMA-200 context filter: only BUY above EMA-200 | only SELL below EMA-200
 // Uses same CalcSLTP/CalcLot as all other entries. MaxEntries and TradeDir apply.
 // Concurrent position ADX gate (adxSustained) uses MA60_ADX_Min, not ADX_Min.
+
+// ── GOAL TRACKER ──────────────────────────────────────────────────
+enum ENUM_GOAL_SCHEDULE { GOAL_7DAYS = 0, GOAL_WEEKDAYS = 1 };
+input group             "── GOAL TRACKER ───────────────────────────────────"
+input bool              Goal_On         = false;         // Enable Goal Tracker
+input ENUM_GOAL_SCHEDULE Goal_Schedule  = GOAL_WEEKDAYS; // Trading days: 7-day or Weekdays only
+input double            Goal_Monthly    = 500.0;         // Monthly profit target ($)
+input double            Goal_LotScale   = 0.50;          // Lot multiplier when daily target is met (e.g. 0.5 = halve)
+// How it works:
+//   Daily target  = (Goal_Monthly - month PnL so far) / trading days remaining this month
+//   Weekly target = daily target * trading days per week (5 or 7)
+//   Once today's closed+floating PnL >= daily target, all new lots are scaled by Goal_LotScale
+//   The target recalculates every tick so it catches up / relaxes as performance changes
 
 // ── EA SETTINGS ───────────────────────────────────────────────────
 input group             "── EA SETTINGS ───────────────────────────────────"
@@ -220,7 +233,7 @@ string PFX = "TF_";       // object name prefix
 int    DX  = 15;           // X offset from corner
 int    DY  = 30;           // Y offset from corner
 int    DW  = 272;          // dashboard width
-int    DH  = 353;          // dashboard height (added RSI row)
+int    DH  = 453;          // dashboard height (added Goal Tracker section)
 
 //====================================================================
 //  ON INIT
@@ -369,6 +382,15 @@ void OnTick()
    datetime curBar = iTime(_Symbol, PERIOD_CURRENT, 0);
    if(curBar == lastBar) return;
    lastBar = curBar;
+
+   // --- Goal Tracker: trading day gate ---
+   // If weekdays-only mode is selected and today is Saturday or Sunday, suppress all entries.
+   if(Goal_On && Goal_Schedule == GOAL_WEEKDAYS)
+   {
+      MqlDateTime mdt; TimeToStruct(TimeCurrent(), mdt);
+      int dow = mdt.day_of_week;  // 0=Sunday, 6=Saturday
+      if(dow == 0 || dow == 6) return;  // non-trading day — skip to next bar
+   }
 
    // ── SL FLIP RECOVERY ─────────────────────────────────────────────
    // Fires on bar open once SLFlip_Delay bars have elapsed since the SL hit.
@@ -853,6 +875,124 @@ int TotalPos()
 }
 
 //====================================================================
+//  GOAL TRACKER — CALENDAR & PnL HELPERS
+//====================================================================
+
+// Returns true if 'dow' (0=Sun…6=Sat) is a valid trading day for the chosen schedule
+bool IsGoalTradingDay(int dow)
+{
+   if(Goal_Schedule == GOAL_7DAYS) return true;
+   return (dow >= 1 && dow <= 5);  // Monday=1 … Friday=5
+}
+
+// Count trading days in the calendar month containing 'ts'
+int GoalTradingDaysInMonth(datetime ts)
+{
+   MqlDateTime mdt; TimeToStruct(ts, mdt);
+   int year = mdt.year; int month = mdt.mon;
+   // Days in this month
+   int daysInMonth = 31;
+   if(month == 4 || month == 6 || month == 9 || month == 11) daysInMonth = 30;
+   else if(month == 2)
+      daysInMonth = ((year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)) ? 29 : 28;
+
+   int count = 0;
+   MqlDateTime d; d.year = year; d.mon = month; d.hour = 12; d.min = 0; d.sec = 0;
+   for(int day = 1; day <= daysInMonth; day++)
+   {
+      d.day = day;
+      datetime t = StructToTime(d);
+      MqlDateTime tmp; TimeToStruct(t, tmp);
+      if(IsGoalTradingDay(tmp.day_of_week)) count++;
+   }
+   return (count > 0) ? count : 1;
+}
+
+// Count trading days remaining in the month from today (inclusive)
+int GoalTradingDaysRemaining(datetime ts)
+{
+   MqlDateTime mdt; TimeToStruct(ts, mdt);
+   int year = mdt.year; int month = mdt.mon;
+   int daysInMonth = 31;
+   if(month == 4 || month == 6 || month == 9 || month == 11) daysInMonth = 30;
+   else if(month == 2)
+      daysInMonth = ((year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)) ? 29 : 28;
+
+   int count = 0;
+   MqlDateTime d; d.year = year; d.mon = month; d.hour = 12; d.min = 0; d.sec = 0;
+   for(int day = mdt.day; day <= daysInMonth; day++)
+   {
+      d.day = day;
+      datetime t = StructToTime(d);
+      MqlDateTime tmp; TimeToStruct(t, tmp);
+      if(IsGoalTradingDay(tmp.day_of_week)) count++;
+   }
+   return (count > 0) ? count : 1;
+}
+
+// Trading days per week for this schedule (used for weekly target display)
+int GoalDaysPerWeek() { return (Goal_Schedule == GOAL_7DAYS) ? 7 : 5; }
+
+// Sum closed PnL for this symbol+magic within a time window
+double GoalClosedPnL(datetime fromTime, datetime toTime)
+{
+   double total = 0.0;
+   if(!HistorySelect(fromTime, toTime)) return 0.0;
+   int deals = HistoryDealsTotal();
+   for(int i = 0; i < deals; i++)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket == 0) continue;
+      if(HistoryDealGetString(ticket, DEAL_SYMBOL) != _Symbol) continue;
+      if((long)HistoryDealGetInteger(ticket, DEAL_MAGIC) != Magic) continue;
+      ENUM_DEAL_ENTRY entry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(ticket, DEAL_ENTRY);
+      if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_INOUT) continue;
+      total += HistoryDealGetDouble(ticket, DEAL_PROFIT)
+             + HistoryDealGetDouble(ticket, DEAL_SWAP)
+             + HistoryDealGetDouble(ticket, DEAL_COMMISSION);
+   }
+   return total;
+}
+
+// Sum open floating PnL for this symbol+magic
+double GoalOpenPnL()
+{
+   double total = 0.0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+      if(pos.SelectByIndex(i))
+         if(pos.Symbol() == _Symbol && pos.Magic() == Magic)
+            total += pos.Profit() + pos.Swap() + pos.Commission();
+   return total;
+}
+
+// Today's total PnL (closed + floating) for this symbol+magic
+double GoalTodayPnL()
+{
+   MqlDateTime mdt; TimeToStruct(TimeCurrent(), mdt);
+   mdt.hour = 0; mdt.min = 0; mdt.sec = 0;
+   datetime dayStart = StructToTime(mdt);
+   return GoalClosedPnL(dayStart, TimeCurrent()) + GoalOpenPnL();
+}
+
+// This calendar month's total closed PnL (floating excluded to avoid premature counting)
+double GoalMonthPnL()
+{
+   MqlDateTime mdt; TimeToStruct(TimeCurrent(), mdt);
+   mdt.day = 1; mdt.hour = 0; mdt.min = 0; mdt.sec = 0;
+   datetime monthStart = StructToTime(mdt);
+   return GoalClosedPnL(monthStart, TimeCurrent()) + GoalOpenPnL();
+}
+
+// Compute daily target based on remaining monthly goal and remaining trading days
+double GoalDailyTarget()
+{
+   if(!Goal_On || Goal_Monthly <= 0.0) return 0.0;
+   double remaining  = Goal_Monthly - GoalMonthPnL();
+   int    daysLeft   = GoalTradingDaysRemaining(TimeCurrent());
+   return remaining / daysLeft;
+}
+
+//====================================================================
 //  LOT SIZE CALCULATION
 //====================================================================
 double CalcLot()
@@ -878,6 +1018,18 @@ double CalcLot()
    lot = MathFloor(lot / lotStep) * lotStep;
    lot = MathMax(lot, minLot);
    lot = MathMin(lot, maxLot);
+
+   // Goal Tracker: scale down lot size when today's PnL has already met the daily target
+   if(Goal_On && Goal_LotScale > 0.0 && Goal_LotScale < 1.0)
+   {
+      double dailyTarget = GoalDailyTarget();
+      if(dailyTarget > 0.0 && GoalTodayPnL() >= dailyTarget)
+      {
+         lot = MathFloor((lot * Goal_LotScale) / lotStep) * lotStep;
+         lot = MathMax(lot, minLot);
+      }
+   }
+
    return lot;
 }
 
@@ -1065,7 +1217,7 @@ void ManageBE()
 //====================================================================
 //  PROFIT TARGET  (runs every tick)
 //  Closes all EA positions on THIS symbol when their combined floating
-//  P&L >= PT_Pct% of account balance.  Other instruments are unaffected.
+//  P&L >= PT_Amt ($).  Other instruments are unaffected.
 //====================================================================
 void CheckProfitTarget()
 {
@@ -1078,10 +1230,7 @@ void CheckProfitTarget()
             symbolPL += pos.Profit() + pos.Swap() + pos.Commission();
    }
 
-   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-   double target  = balance * PT_Pct / 100.0;
-
-   if(symbolPL >= target && target > 0.0)
+   if(symbolPL >= PT_Amt && PT_Amt > 0.0)
    {
       Print("TrendFlow: Profit Target hit on ", _Symbol,
             "  Float P&L=", DoubleToString(symbolPL, 2),
@@ -1390,20 +1539,35 @@ void BuildDashboard()
 
    MakeRect(PFX+"sep3", x, y+288, w, 1, COL_SEP);
 
-   //--- SECTION 4: SETTINGS FOOTER ──────────────────────────────────
-   MakeLabel(PFX+"s4_hdr", x+p, y+293, "SETTINGS", COL_DIM, 7);
+   //--- SECTION 4: GOAL TRACKER ──────────────────────────────────────
+   MakeLabel(PFX+"s4_hdr",    x+p,    y+293, "GOAL TRACKER", COL_DIM, 7);
+
+   // Labels (static)
+   MakeLabel(PFX+"lbl_gmonth", x+p,    y+308, "Monthly",    COL_DIM, 8);
+   MakeLabel(PFX+"val_gmonth", x+p+90, y+308, "──────",     COL_DIM, 8, "Segoe UI Semibold");
+   MakeLabel(PFX+"lbl_gweek",  x+p,    y+323, "This Week",  COL_DIM, 8);
+   MakeLabel(PFX+"val_gweek",  x+p+90, y+323, "──────",     COL_DIM, 8, "Segoe UI Semibold");
+   MakeLabel(PFX+"lbl_gday",   x+p,    y+338, "Daily",      COL_DIM, 8);
+   MakeLabel(PFX+"val_gday",   x+p+90, y+338, "──────",     COL_DIM, 8, "Segoe UI Semibold");
+   MakeLabel(PFX+"lbl_gtoday", x+p,    y+353, "Today",      COL_DIM, 8);
+   MakeLabel(PFX+"val_gtoday", x+p+90, y+353, "──────",     COL_DIM, 8, "Segoe UI Semibold");
+
+   MakeRect(PFX+"sep4", x, y+373, w, 1, COL_SEP);
+
+   //--- SECTION 5: SETTINGS FOOTER ──────────────────────────────────
+   MakeLabel(PFX+"s5_hdr", x+p, y+378, "SETTINGS", COL_DIM, 7);
 
    string ft1 = "Dir: " + GetDirStr() + "   Lot: " + GetLotStr() + "   TP/SL: " + GetTPSLStr();
    string ft2 = "Tr: "  + (Trail_On   ? IntegerToString(Trail_Step)   + "p" : "OFF") +
                 "  BE: " + (BE_On      ? IntegerToString(BE_Trigger)   + "p" : "OFF") +
-                "  PT: " + (PT_On      ? DoubleToString(PT_Pct, 1)     + "%" : "OFF") +
+                "  PT: " + (PT_On      ? "$" + DoubleToString(PT_Amt, 2)     : "OFF") +
                 "  SI: " + (SI_On      ? IntegerToString(SI_MaxCap) + " cap" : "OFF") +
                 "  SLF:" + (SLFlip_On  ? "ON" : "OFF");
 
-   MakeLabel(PFX+"ft1",    x+p, y+307, ft1, COL_DIM, 7);
-   MakeLabel(PFX+"ft2",    x+p, y+321, ft2, COL_DIM, 7);
+   MakeLabel(PFX+"ft1",    x+p, y+392, ft1, COL_DIM, 7);
+   MakeLabel(PFX+"ft2",    x+p, y+406, ft2, COL_DIM, 7);
    // Flip-armed alert row (hidden unless armed)
-   MakeLabel(PFX+"ft_flip", x+p, y+335, "", COL_DIM, 7);
+   MakeLabel(PFX+"ft_flip", x+p, y+420, "", COL_DIM, 7);
 }
 
 //====================================================================
@@ -1582,6 +1746,75 @@ void UpdateDashboard()
    else
    {
       SetLabel(PFX+"ft_flip", "", COL_DIM);
+   }
+
+   // ── GOAL TRACKER section ─────────────────────────────────────────
+   if(Goal_On)
+   {
+      string cur = AccountInfoString(ACCOUNT_CURRENCY);
+
+      // Current P&L figures
+      double monthPnL   = GoalMonthPnL();
+      double todayPnL   = GoalTodayPnL();
+      double dailyTgt   = GoalDailyTarget();
+      double weeklyTgt  = dailyTgt * GoalDaysPerWeek();
+      double remaining  = Goal_Monthly - monthPnL;
+
+      // Monthly row: "Target $500  Made $123.45"
+      string monthSign = (monthPnL >= 0) ? "+" : "";
+      string monthTxt  = "Tgt $" + DoubleToString(Goal_Monthly, 2) +
+                         "  Made " + monthSign + DoubleToString(monthPnL, 2);
+      color  monthClr  = (monthPnL >= Goal_Monthly) ? COL_GREEN :
+                         (monthPnL >= Goal_Monthly * 0.5) ? COL_YELLOW : COL_DIM;
+      SetLabel(PFX+"val_gmonth", monthTxt, monthClr);
+
+      // Weekly target row: "Wk $XX.XX  Left $XX.XX"
+      string weekTxt = "Wk $" + DoubleToString(weeklyTgt, 2) +
+                       "  Left $" + DoubleToString(MathMax(remaining, 0.0), 2);
+      SetLabel(PFX+"val_gweek", weekTxt, COL_DIM);
+
+      // Daily target row: "Day $XX.XX  [days left]d"
+      int dLeft = GoalTradingDaysRemaining(TimeCurrent());
+      string schedule = (Goal_Schedule == GOAL_7DAYS) ? "7d" : "5d";
+      string dayTxt = "Day $" + DoubleToString(MathMax(dailyTgt, 0.0), 2) +
+                      "  " + IntegerToString(dLeft) + " days (" + schedule + ")";
+      SetLabel(PFX+"val_gday", dayTxt, COL_DIM);
+
+      // Today row — coloured by progress vs daily target
+      string todaySign = (todayPnL >= 0) ? "+" : "";
+      string todayTxt;
+      color  todayClr;
+      if(dailyTgt <= 0.0)
+      {
+         // Monthly goal already exceeded — display as bonus
+         todayTxt = todaySign + DoubleToString(todayPnL, 2) + "  GOAL MET ✓";
+         todayClr = COL_GREEN;
+      }
+      else if(todayPnL >= dailyTgt)
+      {
+         todayTxt = todaySign + DoubleToString(todayPnL, 2) + "  TARGET HIT ✓";
+         todayClr = COL_GREEN;
+      }
+      else if(todayPnL >= dailyTgt * 0.5)
+      {
+         todayTxt = todaySign + DoubleToString(todayPnL, 2) +
+                    " / $" + DoubleToString(dailyTgt, 2) + "  ◈";
+         todayClr = COL_YELLOW;
+      }
+      else
+      {
+         todayTxt = todaySign + DoubleToString(todayPnL, 2) +
+                    " / $" + DoubleToString(dailyTgt, 2);
+         todayClr = COL_RED;
+      }
+      SetLabel(PFX+"val_gtoday", todayTxt, todayClr);
+   }
+   else
+   {
+      SetLabel(PFX+"val_gmonth", "DISABLED", COL_DIM);
+      SetLabel(PFX+"val_gweek",  "──────",   COL_DIM);
+      SetLabel(PFX+"val_gday",   "──────",   COL_DIM);
+      SetLabel(PFX+"val_gtoday", "──────",   COL_DIM);
    }
 
    ChartRedraw();
