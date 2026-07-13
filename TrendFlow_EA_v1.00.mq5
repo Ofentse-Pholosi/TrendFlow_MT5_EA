@@ -161,11 +161,12 @@ input group             "── MA60 FAST ENTRY ──────────�
 input bool              MA60_On         = false;       // Enable 60 LWMA Fast Entry strategy
 input int               MA60_Period     = 60;          // LWMA Period
 input int               MA60_Shift      = 5;           // LWMA Shift (bars forward on chart)
-input double            MA60_ADX_Min    = 30.0;        // Min ADX for MA60 entries
-input double            MA60_RSI_Buy    = 30.0;        // RSI must cross above this level  (BUY)
-input double            MA60_RSI_Sell   = 70.0;        // RSI must cross below this level  (SELL)
+input double            MA60_ADX_Min    = 20.0;        // Min ADX for MA60 entries
+input double            MA60_RSI_Buy    = 55.0;        // RSI must be >= this for BUY  (bullish momentum)
+input double            MA60_RSI_Sell   = 45.0;        // RSI must be <= this for SELL (bearish momentum)
 // All three conditions must fire on the SAME bar:
-//   (1) RSI[2] <= MA60_RSI_Buy  AND RSI[1] > MA60_RSI_Buy   → momentum turning up
+//   (1) RSI[1] >= MA60_RSI_Buy  (55+)                       → bullish momentum confirmed
+//       RSI[1] <= MA60_RSI_Sell (45-)                       → bearish momentum confirmed
 //   (2) Close[2] below LWMA60  AND Close[1] above LWMA60    → price crossed the fast MA
 //   (3) ADX[1] >= MA60_ADX_Min                              → trend has sufficient strength
 // EMA-200 context filter: only BUY above EMA-200 | only SELL below EMA-200
@@ -777,7 +778,7 @@ void OnTick()
    // =====================================================================
    //  MA60 FAST ENTRY  (third independent entry engine)
    //  Three conditions must align on the same bar:
-   //    (1) RSI crosses above MA60_RSI_Buy (30) or below MA60_RSI_Sell (70)
+   //    (1) RSI[1] >= MA60_RSI_Buy (55) for BUY  |  RSI[1] <= MA60_RSI_Sell (45) for SELL
    //    (2) Price crosses above/below the LWMA-60 (shift 5)
    //    (3) ADX >= MA60_ADX_Min (30)
    //  EMA-200 context: BUY only above EMA-200 | SELL only below EMA-200
@@ -790,9 +791,9 @@ void OnTick()
       bool ma60BuyCross  = (c2 < ma60_2 && c1 >= ma60_1);  // price crossed above LWMA-60
       bool ma60SellCross = (c2 > ma60_2 && c1 <= ma60_1);  // price crossed below LWMA-60
 
-      // RSI crossover on last closed bar (return from extreme, same two-bar pattern)
-      bool rsiMA60Buy    = (rsi2 <= MA60_RSI_Buy  && rsi1 > MA60_RSI_Buy);
-      bool rsiMA60Sell   = (rsi2 >= MA60_RSI_Sell && rsi1 < MA60_RSI_Sell);
+      // RSI momentum confirmation on last closed bar
+      bool rsiMA60Buy    = (rsi1 >= MA60_RSI_Buy);   // RSI 55+ → bullish momentum
+      bool rsiMA60Sell   = (rsi1 <= MA60_RSI_Sell);  // RSI 45- → bearish momentum
 
       // ADX gate — separate threshold and sustained variant for concurrent entries
       bool ma60AdxOk        = (adx1 >= MA60_ADX_Min);
@@ -1635,11 +1636,11 @@ void UpdateDashboard()
       // Check MA60 fast entry signal
       bool ma60DashBuy  = MA60_On && ArraySize(bufMA60) >= 3 &&
                           (c2 < ma60_2 && c1 >= ma60_1) &&
-                          (rsi2 <= MA60_RSI_Buy  && rsi1 > MA60_RSI_Buy) &&
+                          (rsi1 >= MA60_RSI_Buy) &&
                           (adx1 >= MA60_ADX_Min) && (c1 > ema1);
       bool ma60DashSell = MA60_On && ArraySize(bufMA60) >= 3 &&
                           (c2 > ma60_2 && c1 <= ma60_1) &&
-                          (rsi2 >= MA60_RSI_Sell && rsi1 < MA60_RSI_Sell) &&
+                          (rsi1 <= MA60_RSI_Sell) &&
                           (adx1 >= MA60_ADX_Min) && (c1 < ema1);
 
       // Check for active band-touch reversal signal (wick + ADX >= Env_ADX_Min)
