@@ -179,11 +179,10 @@ input group             "── GOAL TRACKER ───────────�
 input bool              Goal_On         = false;         // Enable Goal Tracker
 input ENUM_GOAL_SCHEDULE Goal_Schedule  = GOAL_WEEKDAYS; // Trading days: 7-day or Weekdays only
 input double            Goal_Monthly    = 500.0;         // Monthly profit target ($)
-input double            Goal_LotScale   = 0.50;          // Lot multiplier when daily target is met (e.g. 0.5 = halve)
 // How it works:
 //   Daily target  = (Goal_Monthly - month PnL so far) / trading days remaining this month
 //   Weekly target = daily target * trading days per week (5 or 7)
-//   Once today's closed+floating PnL >= daily target, all new lots are scaled by Goal_LotScale
+//   When today's closed+floating PnL >= daily target, all open positions are closed immediately
 //   The target recalculates every tick so it catches up / relaxes as performance changes
 
 // ── EA SETTINGS ───────────────────────────────────────────────────
@@ -372,6 +371,7 @@ void OnTick()
 
    // --- Tick-level management (runs on every tick) ---
    if(PT_On)    CheckProfitTarget();
+   if(Goal_On)  CheckGoalDailyTarget();
    if(Trail_On) ManageTrail();
    if(BE_On)    ManageBE();
    if(SI_On)    CheckScaleIn();
@@ -1019,18 +1019,6 @@ double CalcLot()
    lot = MathFloor(lot / lotStep) * lotStep;
    lot = MathMax(lot, minLot);
    lot = MathMin(lot, maxLot);
-
-   // Goal Tracker: scale down lot size when today's PnL has already met the daily target
-   if(Goal_On && Goal_LotScale > 0.0 && Goal_LotScale < 1.0)
-   {
-      double dailyTarget = GoalDailyTarget();
-      if(dailyTarget > 0.0 && GoalTodayPnL() >= dailyTarget)
-      {
-         lot = MathFloor((lot * Goal_LotScale) / lotStep) * lotStep;
-         lot = MathMax(lot, minLot);
-      }
-   }
-
    return lot;
 }
 
@@ -1212,6 +1200,38 @@ void ManageBE()
          if(profitPts >= (double)BE_Trigger && (curSL == 0.0 || curSL > beSL_sell + pt))
             trade.PositionModify(ticket, beSL_sell, curTP);
       }
+   }
+}
+
+//====================================================================
+//  GOAL TRACKER — DAILY TARGET ENFORCER  (runs every tick)
+//  When Goal_On is true and today's combined P&L (closed + floating)
+//  for this symbol reaches the derived daily target, close all open
+//  positions on this symbol and block further entries via lot scaling.
+//  This enforces the daily target as a hard ceiling, not just a nudge.
+//====================================================================
+void CheckGoalDailyTarget()
+{
+   double dailyTarget = GoalDailyTarget();
+   if(dailyTarget <= 0.0) return;    // monthly goal already met — nothing to enforce
+
+   double todayPnL = GoalTodayPnL();
+   if(todayPnL < dailyTarget) return; // not there yet
+
+   // Daily target hit — close all open positions on this symbol
+   bool anyOpen = false;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+      if(pos.SelectByIndex(i))
+         if(pos.Symbol() == _Symbol && pos.Magic() == Magic)
+            { anyOpen = true; break; }
+
+   if(anyOpen)
+   {
+      Print("TrendFlow [GOAL]: Daily target hit on ", _Symbol,
+            "  Today P&L=$", DoubleToString(todayPnL, 2),
+            "  Target=$",    DoubleToString(dailyTarget, 2),
+            "  → closing symbol positions.");
+      CloseAll();
    }
 }
 
