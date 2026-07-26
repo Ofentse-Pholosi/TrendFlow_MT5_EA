@@ -233,7 +233,7 @@ string PFX = "TF_";       // object name prefix
 int    DX  = 15;           // X offset from corner
 int    DY  = 30;           // Y offset from corner
 int    DW  = 272;          // dashboard width
-int    DH  = 453;          // dashboard height (added Goal Tracker section)
+int    DH  = 468;          // dashboard height (added Goal Tracker section)
 
 //====================================================================
 //  ON INIT
@@ -1525,58 +1525,62 @@ void BuildDashboard()
    MakeLabel(PFX+"lbl_ema",   x+p,    y+128, "EMA 200", COL_DIM,  7);
    MakeLabel(PFX+"val_ema",   x+p+62, y+128, "──────",  COL_BLUE, 7);
 
-   // RSI row (NEW)
+   // RSI row
    MakeLabel(PFX+"lbl_rsi",   x+p,    y+143, "RSI(20)", COL_DIM,  8);
    MakeLabel(PFX+"val_rsi",   x+p+90, y+143, "──────",  COL_DIM,  8, "Segoe UI Semibold");
 
-   MakeRect(PFX+"sep1", x, y+157, w, 1, COL_SEP);
+   // Body Filter row
+   MakeLabel(PFX+"lbl_body",  x+p,    y+157, "Body",    COL_DIM,  8);
+   MakeLabel(PFX+"val_body",  x+p+90, y+157, "──────",  COL_DIM,  8, "Segoe UI Semibold");
+
+   MakeRect(PFX+"sep1", x, y+172, w, 1, COL_SEP);
 
    //--- SECTION 2: POSITIONS ────────────────────────────────────────
-   MakeLabel(PFX+"s2_hdr", x+p, y+162, "POSITIONS", COL_DIM, 7);
+   MakeLabel(PFX+"s2_hdr", x+p, y+177, "POSITIONS", COL_DIM, 7);
 
-   MakeLabel(PFX+"lbl_total", x+p,     y+177, "Open Trades", COL_DIM, 8);
-   MakeLabel(PFX+"val_total", x+p+110, y+177, "0 / " + IntegerToString(MaxEntries), COL_WHITE, 8, "Segoe UI Semibold");
+   MakeLabel(PFX+"lbl_total", x+p,     y+192, "Open Trades", COL_DIM, 8);
+   MakeLabel(PFX+"val_total", x+p+110, y+192, "0 / " + IntegerToString(MaxEntries), COL_WHITE, 8, "Segoe UI Semibold");
 
-   MakeLabel(PFX+"lbl_bs",    x+p,     y+192, "Buys / Sells", COL_DIM, 8);
-   MakeLabel(PFX+"val_bs",    x+p+110, y+192, "0 / 0", COL_WHITE, 8);
+   MakeLabel(PFX+"lbl_bs",    x+p,     y+207, "Buys / Sells", COL_DIM, 8);
+   MakeLabel(PFX+"val_bs",    x+p+110, y+207, "0 / 0", COL_WHITE, 8);
 
-   MakeLabel(PFX+"lbl_si",    x+p,     y+207, "Scale-In", COL_DIM, 8);
-   MakeLabel(PFX+"val_si",    x+p+110, y+207, SI_On ? "0 / " + IntegerToString(SI_MaxCap) : "OFF",
+   MakeLabel(PFX+"lbl_si",    x+p,     y+222, "Scale-In", COL_DIM, 8);
+   MakeLabel(PFX+"val_si",    x+p+110, y+222, SI_On ? "0 / " + IntegerToString(SI_MaxCap) : "OFF",
              SI_On ? COL_WHITE : COL_DIM, 8);
 
-   MakeRect(PFX+"sep2", x, y+222, w, 1, COL_SEP);
+   MakeRect(PFX+"sep2", x, y+237, w, 1, COL_SEP);
 
    //--- SECTION 3: ACCOUNT ──────────────────────────────────────────
-   MakeLabel(PFX+"s3_hdr", x+p, y+227, "ACCOUNT", COL_DIM, 7);
+   MakeLabel(PFX+"s3_hdr", x+p, y+242, "ACCOUNT", COL_DIM, 7);
 
-   MakeLabel(PFX+"lbl_bal",  x+p,     y+242, "Balance",   COL_DIM, 8);
-   MakeLabel(PFX+"val_bal",  x+p+110, y+242, "──────",    COL_WHITE, 8, "Segoe UI Semibold");
+   MakeLabel(PFX+"lbl_bal",  x+p,     y+257, "Balance",   COL_DIM, 8);
+   MakeLabel(PFX+"val_bal",  x+p+110, y+257, "──────",    COL_WHITE, 8, "Segoe UI Semibold");
 
-   MakeLabel(PFX+"lbl_eq",   x+p,     y+257, "Equity",    COL_DIM, 8);
-   MakeLabel(PFX+"val_eq",   x+p+110, y+257, "──────",    COL_WHITE, 8, "Segoe UI Semibold");
+   MakeLabel(PFX+"lbl_eq",   x+p,     y+272, "Equity",    COL_DIM, 8);
+   MakeLabel(PFX+"val_eq",   x+p+110, y+272, "──────",    COL_WHITE, 8, "Segoe UI Semibold");
 
-   MakeLabel(PFX+"lbl_pnl",  x+p,     y+272, "Float P&L", COL_DIM, 8);
-   MakeLabel(PFX+"val_pnl",  x+p+110, y+272, "──────",    COL_WHITE, 8, "Segoe UI Semibold");
+   MakeLabel(PFX+"lbl_pnl",  x+p,     y+287, "Float P&L", COL_DIM, 8);
+   MakeLabel(PFX+"val_pnl",  x+p+110, y+287, "──────",    COL_WHITE, 8, "Segoe UI Semibold");
 
-   MakeRect(PFX+"sep3", x, y+288, w, 1, COL_SEP);
+   MakeRect(PFX+"sep3", x, y+303, w, 1, COL_SEP);
 
    //--- SECTION 4: GOAL TRACKER ──────────────────────────────────────
-   MakeLabel(PFX+"s4_hdr",    x+p,    y+293, "GOAL TRACKER", COL_DIM, 7);
+   MakeLabel(PFX+"s4_hdr",    x+p,    y+308, "GOAL TRACKER", COL_DIM, 7);
 
    // Labels (static)
-   MakeLabel(PFX+"lbl_gmonth", x+p,    y+308, "Monthly",    COL_DIM, 8);
-   MakeLabel(PFX+"val_gmonth", x+p+90, y+308, "──────",     COL_DIM, 8, "Segoe UI Semibold");
-   MakeLabel(PFX+"lbl_gweek",  x+p,    y+323, "This Week",  COL_DIM, 8);
-   MakeLabel(PFX+"val_gweek",  x+p+90, y+323, "──────",     COL_DIM, 8, "Segoe UI Semibold");
-   MakeLabel(PFX+"lbl_gday",   x+p,    y+338, "Daily",      COL_DIM, 8);
-   MakeLabel(PFX+"val_gday",   x+p+90, y+338, "──────",     COL_DIM, 8, "Segoe UI Semibold");
-   MakeLabel(PFX+"lbl_gtoday", x+p,    y+353, "Today",      COL_DIM, 8);
-   MakeLabel(PFX+"val_gtoday", x+p+90, y+353, "──────",     COL_DIM, 8, "Segoe UI Semibold");
+   MakeLabel(PFX+"lbl_gmonth", x+p,    y+323, "Monthly",    COL_DIM, 8);
+   MakeLabel(PFX+"val_gmonth", x+p+90, y+323, "──────",     COL_DIM, 8, "Segoe UI Semibold");
+   MakeLabel(PFX+"lbl_gweek",  x+p,    y+338, "This Week",  COL_DIM, 8);
+   MakeLabel(PFX+"val_gweek",  x+p+90, y+338, "──────",     COL_DIM, 8, "Segoe UI Semibold");
+   MakeLabel(PFX+"lbl_gday",   x+p,    y+353, "Daily",      COL_DIM, 8);
+   MakeLabel(PFX+"val_gday",   x+p+90, y+353, "──────",     COL_DIM, 8, "Segoe UI Semibold");
+   MakeLabel(PFX+"lbl_gtoday", x+p,    y+368, "Today",      COL_DIM, 8);
+   MakeLabel(PFX+"val_gtoday", x+p+90, y+368, "──────",     COL_DIM, 8, "Segoe UI Semibold");
 
-   MakeRect(PFX+"sep4", x, y+373, w, 1, COL_SEP);
+   MakeRect(PFX+"sep4", x, y+388, w, 1, COL_SEP);
 
    //--- SECTION 5: SETTINGS FOOTER ──────────────────────────────────
-   MakeLabel(PFX+"s5_hdr", x+p, y+378, "SETTINGS", COL_DIM, 7);
+   MakeLabel(PFX+"s5_hdr", x+p, y+393, "SETTINGS", COL_DIM, 7);
 
    string ft1 = "Dir: " + GetDirStr() + "   Lot: " + GetLotStr() + "   TP/SL: " + GetTPSLStr();
    string ft2 = "Tr: "  + (Trail_On   ? IntegerToString(Trail_Step)   + "p" : "OFF") +
@@ -1585,10 +1589,10 @@ void BuildDashboard()
                 "  SI: " + (SI_On      ? IntegerToString(SI_MaxCap) + " cap" : "OFF") +
                 "  SLF:" + (SLFlip_On  ? "ON" : "OFF");
 
-   MakeLabel(PFX+"ft1",    x+p, y+392, ft1, COL_DIM, 7);
-   MakeLabel(PFX+"ft2",    x+p, y+406, ft2, COL_DIM, 7);
+   MakeLabel(PFX+"ft1",    x+p, y+407, ft1, COL_DIM, 7);
+   MakeLabel(PFX+"ft2",    x+p, y+421, ft2, COL_DIM, 7);
    // Flip-armed alert row (hidden unless armed)
-   MakeLabel(PFX+"ft_flip", x+p, y+420, "", COL_DIM, 7);
+   MakeLabel(PFX+"ft_flip", x+p, y+435, "", COL_DIM, 7);
 }
 
 //====================================================================
@@ -1724,6 +1728,48 @@ void UpdateDashboard()
       else if(rsiVal <= RSI_OS_Return) { rsiTxt = DoubleToString(rsiVal,1) + "  DEPRESSED";    rsiClr = COL_YELLOW; }
       else                             { rsiTxt = DoubleToString(rsiVal,1) + "  NEUTRAL";       rsiClr = COL_DIM;    }
       SetLabel(PFX+"val_rsi", rsiTxt, rsiClr);
+   }
+
+   // Body Filter row
+   // Shows: actual body / minimum required body, and pass/fail state
+   {
+      double body    = MathAbs(iClose(_Symbol, PERIOD_CURRENT, 1) -
+                               iOpen (_Symbol, PERIOD_CURRENT, 1));
+      double minBody = Body_ATR * (ArraySize(bufATR) >= 2 ? bufATR[1] : 0.0);
+      bool   bullBar = (iClose(_Symbol, PERIOD_CURRENT, 1) > iOpen(_Symbol, PERIOD_CURRENT, 1));
+      bool   bearBar = (iClose(_Symbol, PERIOD_CURRENT, 1) < iOpen(_Symbol, PERIOD_CURRENT, 1));
+
+      string bodyTxt; color bodyClr;
+      if(!Body_On)
+      {
+         bodyTxt = "DISABLED";
+         bodyClr = COL_DIM;
+      }
+      else if(minBody <= 0.0)
+      {
+         bodyTxt = "──────";
+         bodyClr = COL_DIM;
+      }
+      else
+      {
+         // Express both values in points for readability
+         double bodyPts   = body    / pt;
+         double minPts    = minBody / pt;
+         double pct       = (minBody > 0.0) ? (body / minBody) * 100.0 : 0.0;
+         bool   passDir   = (bullBar || bearBar);       // has a defined direction
+         bool   passSz    = (body >= minBody);          // meets size threshold
+         bool   passes    = passDir && passSz;
+
+         string arrow = bullBar ? "▲" : (bearBar ? "▼" : "─");
+         bodyTxt = arrow + " " + DoubleToString(bodyPts, 1) + "p / " +
+                   DoubleToString(minPts, 1) + "p  (" +
+                   DoubleToString(pct, 0) + "%)";
+
+         if(passes)       bodyClr = COL_GREEN;
+         else if(pct > 50) bodyClr = COL_YELLOW;
+         else              bodyClr = COL_RED;
+      }
+      SetLabel(PFX+"val_body", bodyTxt, bodyClr);
    }
 
    // Positions
