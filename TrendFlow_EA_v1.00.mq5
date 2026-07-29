@@ -799,12 +799,18 @@ void OnTick()
       bool ma60AdxOk        = (adx1 >= MA60_ADX_Min);
       bool ma60AdxSustained = (adx1 >= MA60_ADX_Min && adx2 >= MA60_ADX_Min);
 
-      // EMA-200 directional context
-      bool ema200Bull = (c1 > ema1);
-      bool ema200Bear = (c1 < ema1);
+      // EMA-200 context filter — behaviour depends on TradeDir:
+      // DIR_BOTH:      NO EMA-200 filter — MA60 catches moves freely on either side.
+      //                Direction controlled by MaxEntries, ADX, RSI and body filter alone.
+      // DIR_BUY_ONLY:  price must be BELOW EMA-200 — catching the retracement bottom
+      //                before price bounces back up. Buying above EMA-200 = buying the high.
+      // DIR_SELL_ONLY: price must be ABOVE EMA-200 — catching the retracement top
+      //                before price falls back down. Selling below EMA-200 = selling the low.
+      bool ma60EmaOkBuy  = (TradeDir == DIR_BOTH) ? true : (c1 < ema1);
+      bool ma60EmaOkSell = (TradeDir == DIR_BOTH) ? true : (c1 > ema1);
 
       // --- MA60 BUY ---
-      if(ma60BuyCross && rsiMA60Buy && ma60AdxOk && ema200Bull && TradeDir != DIR_SELL_ONLY)
+      if(ma60BuyCross && rsiMA60Buy && ma60AdxOk && ma60EmaOkBuy && TradeDir != DIR_SELL_ONLY)
       {
          int  existingBuys = CountPos(POSITION_TYPE_BUY);
          bool adxPass      = (existingBuys == 0) ? ma60AdxOk : ma60AdxSustained;
@@ -829,7 +835,7 @@ void OnTick()
       }
 
       // --- MA60 SELL ---
-      if(ma60SellCross && rsiMA60Sell && ma60AdxOk && ema200Bear && TradeDir != DIR_BUY_ONLY)
+      if(ma60SellCross && rsiMA60Sell && ma60AdxOk && ma60EmaOkSell && TradeDir != DIR_BUY_ONLY)
       {
          int  existingSells = CountPos(POSITION_TYPE_SELL);
          bool adxPass       = (existingSells == 0) ? ma60AdxOk : ma60AdxSustained;
@@ -1657,15 +1663,17 @@ void UpdateDashboard()
    else if(sellCross)      { sigTxt = "SELL  ▼";      sigClr = COL_RED;   }
    else
    {
-      // Check MA60 fast entry signal
+      // Check MA60 fast entry signal (mirrors entry engine EMA-200 logic)
+      bool dashEmaOkBuy  = (TradeDir == DIR_BOTH) ? true : (c1 < ema1);
+      bool dashEmaOkSell = (TradeDir == DIR_BOTH) ? true : (c1 > ema1);
       bool ma60DashBuy  = MA60_On && ArraySize(bufMA60) >= 3 &&
                           (c2 < ma60_2 && c1 >= ma60_1) &&
                           (rsi1 >= MA60_RSI_Buy) &&
-                          (adx1 >= MA60_ADX_Min) && (c1 > ema1);
+                          (adx1 >= MA60_ADX_Min) && dashEmaOkBuy;
       bool ma60DashSell = MA60_On && ArraySize(bufMA60) >= 3 &&
                           (c2 > ma60_2 && c1 <= ma60_1) &&
                           (rsi1 <= MA60_RSI_Sell) &&
-                          (adx1 >= MA60_ADX_Min) && (c1 < ema1);
+                          (adx1 >= MA60_ADX_Min) && dashEmaOkSell;
 
       // Check for active band-touch reversal signal (wick + ADX >= Env_ADX_Min)
       bool revBuy  = Env_On && Env_Entry_On && ArraySize(bufEnvDn) >= 2 &&
