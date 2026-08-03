@@ -164,12 +164,20 @@ input int               MA60_Shift      = 5;           // LWMA Shift (bars forwa
 input double            MA60_ADX_Min    = 20.0;        // Min ADX for MA60 entries
 input double            MA60_RSI_Buy    = 55.0;        // RSI must be >= this for BUY  (bullish momentum)
 input double            MA60_RSI_Sell   = 45.0;        // RSI must be <= this for SELL (bearish momentum)
+input double            MA60_STD_Thresh  = 1.0;        // MA distance threshold in STD: <= = with-trend, > = counter-trend
+input double            MA60_CT_RSI_Buy  = 40.0;       // Counter-trend BUY min RSI  (recovering from oversold)
+input double            MA60_CT_RSI_Sell = 60.0;       // Counter-trend SELL max RSI (declining from overbought)
+// StdDev period is fixed at 20 bars (recent volatility measure).
+// When |MA60 - EMA200| <= MA60_STD_Thresh * StdDev(20) → MAs are in normal range → MA60 enters WITH the trend.
+// When |MA60 - EMA200| >  MA60_STD_Thresh * StdDev(20) → MAs are overextended   → MA60 flips to counter-trend early entries.
+// With-trend RSI gates  : BUY RSI >= MA60_RSI_Buy (55+) | SELL RSI <= MA60_RSI_Sell (45-)
+// Counter-trend RSI gates: BUY RSI >= MA60_CT_RSI_Buy (40+) | SELL RSI <= MA60_CT_RSI_Sell (60-)
+//   Rationale: in CT mode price is pulling back from an extreme — RSI won't have reached
+//   full momentum yet, so a lower/higher threshold catches the early reversal correctly.
 // All three conditions must fire on the SAME bar:
-//   (1) RSI[1] >= MA60_RSI_Buy  (55+)                       → bullish momentum confirmed
-//       RSI[1] <= MA60_RSI_Sell (45-)                       → bearish momentum confirmed
-//   (2) Close[2] below LWMA60  AND Close[1] above LWMA60    → price crossed the fast MA
-//   (3) ADX[1] >= MA60_ADX_Min                              → trend has sufficient strength
-// EMA-200 context filter: only BUY above EMA-200 | only SELL below EMA-200
+//   (1) RSI confirmation (WT or CT threshold based on extension state)
+//   (2) Close[2] below/above LWMA60  AND Close[1] above/below LWMA60  → MA crossover
+//   (3) ADX[1] >= MA60_ADX_Min                                          → trend strength
 // Uses same CalcSLTP/CalcLot as all other entries. MaxEntries and TradeDir apply.
 // Concurrent position ADX gate (adxSustained) uses MA60_ADX_Min, not ADX_Min.
 
@@ -201,12 +209,14 @@ int  hADX  = INVALID_HANDLE;
 int  hATR  = INVALID_HANDLE;
 int  hEnv  = INVALID_HANDLE;          // Envelopes (EMA 200, deviation 0.3%)
 int  hRSI  = INVALID_HANDLE;          // RSI (period 20)
-int  hMA60 = INVALID_HANDLE;          // LWMA-60 (shift 5) fast-entry MA
+int  hMA60   = INVALID_HANDLE;        // LWMA-60 (shift 5) fast-entry MA
+int  hStdDev = INVALID_HANDLE;        // StdDev(20) — MA separation distance normaliser
 
 double bufEMA[], bufADX[], bufATR[];          // dynamic – required for ArraySetAsSeries
 double bufEnvUp[], bufEnvDn[];                // Envelopes upper (buf 0) and lower (buf 1)
 double bufRSI[];                              // RSI values
 double bufMA60[];                             // LWMA-60 (shift 5) values
+double bufStdDev[];                           // StdDev(20, close) — measures recent price dispersion
 
 datetime lastBar   = 0;
 double   pt        = 0.0;  // one point in price units
@@ -233,7 +243,7 @@ string PFX = "TF_";       // object name prefix
 int    DX  = 15;           // X offset from corner
 int    DY  = 30;           // Y offset from corner
 int    DW  = 272;          // dashboard width
-int    DH  = 468;          // dashboard height (added Goal Tracker section)
+int    DH  = 483;          // dashboard height (added Goal Tracker section)
 
 //====================================================================
 //  ON INIT
@@ -249,21 +259,26 @@ int OnInit()
    hEnv  = iEnvelopes(_Symbol, PERIOD_CURRENT, Env_Period, 0, MODE_EMA, PRICE_CLOSE, Env_Deviation);
    // Envelopes buffers: 0 = upper band, 1 = lower band
    hRSI  = iRSI(_Symbol, PERIOD_CURRENT, RSI_Period, PRICE_CLOSE);
-   hMA60 = iMA(_Symbol, PERIOD_CURRENT, MA60_Period, MA60_Shift, MODE_LWMA, PRICE_CLOSE);
+   hMA60   = iMA(_Symbol, PERIOD_CURRENT, MA60_Period, MA60_Shift, MODE_LWMA, PRICE_CLOSE);
+   hStdDev = iStdDev(_Symbol, PERIOD_CURRENT, 20, 0, MODE_SMA, PRICE_CLOSE);
 
    if(hEMA == INVALID_HANDLE || hADX == INVALID_HANDLE ||
       hATR == INVALID_HANDLE || hEnv == INVALID_HANDLE ||
-      hRSI == INVALID_HANDLE || hMA60 == INVALID_HANDLE)
+      hRSI == INVALID_HANDLE || hMA60 == INVALID_HANDLE ||
+      hStdDev == INVALID_HANDLE)
    {
       Alert("TrendFlow EA: Failed to create indicator handles. EA stopped.");
       return INIT_FAILED;
    }
 
-   ArraySetAsSeries(bufEMA,   true);
-   ArraySetAsSeries(bufADX,   true);
-   ArraySetAsSeries(bufATR,   true);
-   ArraySetAsSeries(bufEnvUp, true);
-   ArraySetAsSeries(bufEnvDn, true);
+   ArraySetAsSeries(bufEMA,    true);
+   ArraySetAsSeries(bufADX,    true);
+   ArraySetAsSeries(bufATR,    true);
+   ArraySetAsSeries(bufEnvUp,  true);
+   ArraySetAsSeries(bufEnvDn,  true);
+   ArraySetAsSeries(bufRSI,    true);
+   ArraySetAsSeries(bufMA60,   true);
+   ArraySetAsSeries(bufStdDev, true);
 
    trade.SetExpertMagicNumber(Magic);
    trade.SetDeviationInPoints(10);
@@ -296,7 +311,8 @@ void OnDeinit(const int reason)
    if(hATR != INVALID_HANDLE) IndicatorRelease(hATR);
    if(hEnv != INVALID_HANDLE) IndicatorRelease(hEnv);
    if(hRSI  != INVALID_HANDLE) IndicatorRelease(hRSI);
-   if(hMA60 != INVALID_HANDLE) IndicatorRelease(hMA60);
+   if(hMA60   != INVALID_HANDLE) IndicatorRelease(hMA60);
+   if(hStdDev != INVALID_HANDLE) IndicatorRelease(hStdDev);
    DeleteDashboard();
    ChartRedraw();
    Print("TrendFlow EA: Deinitialized. Reason=", reason);
@@ -359,7 +375,8 @@ void OnTick()
    if(CopyBuffer(hADX, 0, 0, 4, bufADX) < 4) return;   // buffer 0 = ADX line
    if(CopyBuffer(hATR, 0, 0, 4, bufATR) < 4) return;
    if(CopyBuffer(hRSI,  0, 0, 3, bufRSI)  < 3) return;   // need index 1 (signal bar) and 2 (prior bar)
-   if(CopyBuffer(hMA60, 0, 0, 4, bufMA60) < 4) return;   // LWMA-60: need index 1 and 2 for crossover
+   if(CopyBuffer(hMA60,   0, 0, 4, bufMA60)   < 4) return;   // LWMA-60: need index 1 and 2 for crossover
+   if(CopyBuffer(hStdDev, 0, 0, 3, bufStdDev) < 3) return;   // StdDev(20): index 1 = last closed bar
 
    // Envelopes — copy enough bars for the full lookback window
    int envBars = Env_LookBack + 2;
@@ -791,23 +808,32 @@ void OnTick()
       bool ma60BuyCross  = (c2 < ma60_2 && c1 >= ma60_1);  // price crossed above LWMA-60
       bool ma60SellCross = (c2 > ma60_2 && c1 <= ma60_1);  // price crossed below LWMA-60
 
-      // RSI momentum confirmation on last closed bar
-      bool rsiMA60Buy    = (rsi1 >= MA60_RSI_Buy);   // RSI 55+ → bullish momentum
-      bool rsiMA60Sell   = (rsi1 <= MA60_RSI_Sell);  // RSI 45- → bearish momentum
+      // EMA-200 dynamic filter — compute extension state FIRST so RSI can branch on it.
+      // maDistance = |LWMA-60 - EMA-200| in price.
+      // If distance <= MA60_STD_Thresh * StdDev → NORMAL range → MA60 enters WITH the trend:
+      //     BUY  when price above EMA-200 | SELL when price below EMA-200.
+      // If distance >  MA60_STD_Thresh * StdDev → OVEREXTENDED → MA60 flips to counter-trend:
+      //     BUY  when price below EMA-200 (early bullish reversal) |
+      //     SELL when price above EMA-200 (early bearish reversal).
+      // TradeDir still gates which side is permitted to fire.
+      double ma60StdDev   = (ArraySize(bufStdDev) >= 2) ? bufStdDev[1] : 0.0;
+      double maDistance   = MathAbs(ma60_1 - ema1);
+      bool   ma60Extended = (ma60StdDev > 0.0) && (maDistance > MA60_STD_Thresh * ma60StdDev);
+
+      bool ma60EmaOkBuy  = ma60Extended ? (c1 < ema1) : (c1 > ema1);
+      bool ma60EmaOkSell = ma60Extended ? (c1 > ema1) : (c1 < ema1);
+
+      // RSI confirmation — threshold depends on whether we are in with-trend or counter-trend mode.
+      // WT BUY : RSI >= MA60_RSI_Buy (55) — momentum already bullish.
+      // CT BUY : RSI >= MA60_CT_RSI_Buy (40) — price recovering from oversold; full momentum not yet built.
+      // WT SELL: RSI <= MA60_RSI_Sell (45) — momentum already bearish.
+      // CT SELL: RSI <= MA60_CT_RSI_Sell (60) — price declining from overbought; RSI has not yet collapsed.
+      bool rsiMA60Buy  = ma60Extended ? (rsi1 >= MA60_CT_RSI_Buy)  : (rsi1 >= MA60_RSI_Buy);
+      bool rsiMA60Sell = ma60Extended ? (rsi1 <= MA60_CT_RSI_Sell) : (rsi1 <= MA60_RSI_Sell);
 
       // ADX gate — separate threshold and sustained variant for concurrent entries
       bool ma60AdxOk        = (adx1 >= MA60_ADX_Min);
       bool ma60AdxSustained = (adx1 >= MA60_ADX_Min && adx2 >= MA60_ADX_Min);
-
-      // EMA-200 context filter — behaviour depends on TradeDir:
-      // DIR_BOTH:      NO EMA-200 filter — MA60 catches moves freely on either side.
-      //                Direction controlled by MaxEntries, ADX, RSI and body filter alone.
-      // DIR_BUY_ONLY:  price must be BELOW EMA-200 — catching the retracement bottom
-      //                before price bounces back up. Buying above EMA-200 = buying the high.
-      // DIR_SELL_ONLY: price must be ABOVE EMA-200 — catching the retracement top
-      //                before price falls back down. Selling below EMA-200 = selling the low.
-      bool ma60EmaOkBuy  = (TradeDir == DIR_BOTH) ? true : (c1 < ema1);
-      bool ma60EmaOkSell = (TradeDir == DIR_BOTH) ? true : (c1 > ema1);
 
       // --- MA60 BUY ---
       if(ma60BuyCross && rsiMA60Buy && ma60AdxOk && ma60EmaOkBuy && TradeDir != DIR_SELL_ONLY)
@@ -1536,57 +1562,61 @@ void BuildDashboard()
    MakeLabel(PFX+"val_rsi",   x+p+90, y+143, "──────",  COL_DIM,  8, "Segoe UI Semibold");
 
    // Body Filter row
-   MakeLabel(PFX+"lbl_body",  x+p,    y+157, "Body",    COL_DIM,  8);
-   MakeLabel(PFX+"val_body",  x+p+90, y+157, "──────",  COL_DIM,  8, "Segoe UI Semibold");
+   MakeLabel(PFX+"lbl_body",  x+p,    y+157, "Body",      COL_DIM,  8);
+   MakeLabel(PFX+"val_body",  x+p+90, y+157, "──────",    COL_DIM,  8, "Segoe UI Semibold");
 
-   MakeRect(PFX+"sep1", x, y+172, w, 1, COL_SEP);
+   // MA60 Extension row
+   MakeLabel(PFX+"lbl_ma60x", x+p,    y+172, "MA60 Ext",  COL_DIM,  8);
+   MakeLabel(PFX+"val_ma60x", x+p+90, y+172, "──────",    COL_DIM,  8, "Segoe UI Semibold");
+
+   MakeRect(PFX+"sep1", x, y+187, w, 1, COL_SEP);
 
    //--- SECTION 2: POSITIONS ────────────────────────────────────────
-   MakeLabel(PFX+"s2_hdr", x+p, y+177, "POSITIONS", COL_DIM, 7);
+   MakeLabel(PFX+"s2_hdr", x+p, y+192, "POSITIONS", COL_DIM, 7);
 
-   MakeLabel(PFX+"lbl_total", x+p,     y+192, "Open Trades", COL_DIM, 8);
-   MakeLabel(PFX+"val_total", x+p+110, y+192, "0 / " + IntegerToString(MaxEntries), COL_WHITE, 8, "Segoe UI Semibold");
+   MakeLabel(PFX+"lbl_total", x+p,     y+207, "Open Trades", COL_DIM, 8);
+   MakeLabel(PFX+"val_total", x+p+110, y+207, "0 / " + IntegerToString(MaxEntries), COL_WHITE, 8, "Segoe UI Semibold");
 
-   MakeLabel(PFX+"lbl_bs",    x+p,     y+207, "Buys / Sells", COL_DIM, 8);
-   MakeLabel(PFX+"val_bs",    x+p+110, y+207, "0 / 0", COL_WHITE, 8);
+   MakeLabel(PFX+"lbl_bs",    x+p,     y+222, "Buys / Sells", COL_DIM, 8);
+   MakeLabel(PFX+"val_bs",    x+p+110, y+222, "0 / 0", COL_WHITE, 8);
 
-   MakeLabel(PFX+"lbl_si",    x+p,     y+222, "Scale-In", COL_DIM, 8);
-   MakeLabel(PFX+"val_si",    x+p+110, y+222, SI_On ? "0 / " + IntegerToString(SI_MaxCap) : "OFF",
+   MakeLabel(PFX+"lbl_si",    x+p,     y+237, "Scale-In", COL_DIM, 8);
+   MakeLabel(PFX+"val_si",    x+p+110, y+237, SI_On ? "0 / " + IntegerToString(SI_MaxCap) : "OFF",
              SI_On ? COL_WHITE : COL_DIM, 8);
 
-   MakeRect(PFX+"sep2", x, y+237, w, 1, COL_SEP);
+   MakeRect(PFX+"sep2", x, y+252, w, 1, COL_SEP);
 
    //--- SECTION 3: ACCOUNT ──────────────────────────────────────────
-   MakeLabel(PFX+"s3_hdr", x+p, y+242, "ACCOUNT", COL_DIM, 7);
+   MakeLabel(PFX+"s3_hdr", x+p, y+257, "ACCOUNT", COL_DIM, 7);
 
-   MakeLabel(PFX+"lbl_bal",  x+p,     y+257, "Balance",   COL_DIM, 8);
-   MakeLabel(PFX+"val_bal",  x+p+110, y+257, "──────",    COL_WHITE, 8, "Segoe UI Semibold");
+   MakeLabel(PFX+"lbl_bal",  x+p,     y+272, "Balance",   COL_DIM, 8);
+   MakeLabel(PFX+"val_bal",  x+p+110, y+272, "──────",    COL_WHITE, 8, "Segoe UI Semibold");
 
-   MakeLabel(PFX+"lbl_eq",   x+p,     y+272, "Equity",    COL_DIM, 8);
-   MakeLabel(PFX+"val_eq",   x+p+110, y+272, "──────",    COL_WHITE, 8, "Segoe UI Semibold");
+   MakeLabel(PFX+"lbl_eq",   x+p,     y+287, "Equity",    COL_DIM, 8);
+   MakeLabel(PFX+"val_eq",   x+p+110, y+287, "──────",    COL_WHITE, 8, "Segoe UI Semibold");
 
-   MakeLabel(PFX+"lbl_pnl",  x+p,     y+287, "Float P&L", COL_DIM, 8);
-   MakeLabel(PFX+"val_pnl",  x+p+110, y+287, "──────",    COL_WHITE, 8, "Segoe UI Semibold");
+   MakeLabel(PFX+"lbl_pnl",  x+p,     y+302, "Float P&L", COL_DIM, 8);
+   MakeLabel(PFX+"val_pnl",  x+p+110, y+302, "──────",    COL_WHITE, 8, "Segoe UI Semibold");
 
-   MakeRect(PFX+"sep3", x, y+303, w, 1, COL_SEP);
+   MakeRect(PFX+"sep3", x, y+318, w, 1, COL_SEP);
 
    //--- SECTION 4: GOAL TRACKER ──────────────────────────────────────
-   MakeLabel(PFX+"s4_hdr",    x+p,    y+308, "GOAL TRACKER", COL_DIM, 7);
+   MakeLabel(PFX+"s4_hdr",    x+p,    y+323, "GOAL TRACKER", COL_DIM, 7);
 
    // Labels (static)
-   MakeLabel(PFX+"lbl_gmonth", x+p,    y+323, "Monthly",    COL_DIM, 8);
-   MakeLabel(PFX+"val_gmonth", x+p+90, y+323, "──────",     COL_DIM, 8, "Segoe UI Semibold");
-   MakeLabel(PFX+"lbl_gweek",  x+p,    y+338, "This Week",  COL_DIM, 8);
-   MakeLabel(PFX+"val_gweek",  x+p+90, y+338, "──────",     COL_DIM, 8, "Segoe UI Semibold");
-   MakeLabel(PFX+"lbl_gday",   x+p,    y+353, "Daily",      COL_DIM, 8);
-   MakeLabel(PFX+"val_gday",   x+p+90, y+353, "──────",     COL_DIM, 8, "Segoe UI Semibold");
-   MakeLabel(PFX+"lbl_gtoday", x+p,    y+368, "Today",      COL_DIM, 8);
-   MakeLabel(PFX+"val_gtoday", x+p+90, y+368, "──────",     COL_DIM, 8, "Segoe UI Semibold");
+   MakeLabel(PFX+"lbl_gmonth", x+p,    y+338, "Monthly",    COL_DIM, 8);
+   MakeLabel(PFX+"val_gmonth", x+p+90, y+338, "──────",     COL_DIM, 8, "Segoe UI Semibold");
+   MakeLabel(PFX+"lbl_gweek",  x+p,    y+353, "This Week",  COL_DIM, 8);
+   MakeLabel(PFX+"val_gweek",  x+p+90, y+353, "──────",     COL_DIM, 8, "Segoe UI Semibold");
+   MakeLabel(PFX+"lbl_gday",   x+p,    y+368, "Daily",      COL_DIM, 8);
+   MakeLabel(PFX+"val_gday",   x+p+90, y+368, "──────",     COL_DIM, 8, "Segoe UI Semibold");
+   MakeLabel(PFX+"lbl_gtoday", x+p,    y+383, "Today",      COL_DIM, 8);
+   MakeLabel(PFX+"val_gtoday", x+p+90, y+383, "──────",     COL_DIM, 8, "Segoe UI Semibold");
 
-   MakeRect(PFX+"sep4", x, y+388, w, 1, COL_SEP);
+   MakeRect(PFX+"sep4", x, y+403, w, 1, COL_SEP);
 
    //--- SECTION 5: SETTINGS FOOTER ──────────────────────────────────
-   MakeLabel(PFX+"s5_hdr", x+p, y+393, "SETTINGS", COL_DIM, 7);
+   MakeLabel(PFX+"s5_hdr", x+p, y+408, "SETTINGS", COL_DIM, 7);
 
    string ft1 = "Dir: " + GetDirStr() + "   Lot: " + GetLotStr() + "   TP/SL: " + GetTPSLStr();
    string ft2 = "Tr: "  + (Trail_On   ? IntegerToString(Trail_Step)   + "p" : "OFF") +
@@ -1595,10 +1625,10 @@ void BuildDashboard()
                 "  SI: " + (SI_On      ? IntegerToString(SI_MaxCap) + " cap" : "OFF") +
                 "  SLF:" + (SLFlip_On  ? "ON" : "OFF");
 
-   MakeLabel(PFX+"ft1",    x+p, y+407, ft1, COL_DIM, 7);
-   MakeLabel(PFX+"ft2",    x+p, y+421, ft2, COL_DIM, 7);
+   MakeLabel(PFX+"ft1",    x+p, y+422, ft1, COL_DIM, 7);
+   MakeLabel(PFX+"ft2",    x+p, y+436, ft2, COL_DIM, 7);
    // Flip-armed alert row (hidden unless armed)
-   MakeLabel(PFX+"ft_flip", x+p, y+435, "", COL_DIM, 7);
+   MakeLabel(PFX+"ft_flip", x+p, y+450, "", COL_DIM, 7);
 }
 
 //====================================================================
@@ -1664,8 +1694,8 @@ void UpdateDashboard()
    else
    {
       // Check MA60 fast entry signal (mirrors entry engine EMA-200 logic)
-      bool dashEmaOkBuy  = (TradeDir == DIR_BOTH) ? true : (c1 < ema1);
-      bool dashEmaOkSell = (TradeDir == DIR_BOTH) ? true : (c1 > ema1);
+      bool dashEmaOkBuy  = (c1 < ema1);  // buy signal only valid in bearish structure
+      bool dashEmaOkSell = (c1 > ema1);  // sell signal only valid in bullish structure
       bool ma60DashBuy  = MA60_On && ArraySize(bufMA60) >= 3 &&
                           (c2 < ma60_2 && c1 >= ma60_1) &&
                           (rsi1 >= MA60_RSI_Buy) &&
@@ -1723,7 +1753,15 @@ void UpdateDashboard()
    }
    SetLabel(PFX+"val_rev", revTxt, revClr);
 
-   SetLabel(PFX+"val_ema",  DoubleToString(ema1, _Digits), COL_BLUE);
+   // EMA 200 value + price distance in STD units
+   {
+      double pxDist   = MathAbs(c1 - ema1);
+      double stdV     = (ArraySize(bufStdDev) >= 2) ? bufStdDev[1] : 0.0;
+      string emaTxt   = DoubleToString(ema1, _Digits);
+      if(stdV > 0.0)
+         emaTxt += "   " + DoubleToString(pxDist / stdV, 2) + "σ away";
+      SetLabel(PFX+"val_ema", emaTxt, COL_BLUE);
+   }
 
    // RSI status
    if(ArraySize(bufRSI) >= 2)
@@ -1780,6 +1818,38 @@ void UpdateDashboard()
       SetLabel(PFX+"val_body", bodyTxt, bodyClr);
    }
 
+   // MA60 Extension row — shows MA separation in StdDev units and mode active
+   {
+      string ma60xTxt; color ma60xClr;
+      if(!MA60_On)
+      {
+         ma60xTxt = "DISABLED";
+         ma60xClr = COL_DIM;
+      }
+      else
+      {
+         double stdDevVal  = (ArraySize(bufStdDev) >= 2) ? bufStdDev[1] : 0.0;
+         double dist       = MathAbs(ma60_1 - ema1);
+         if(stdDevVal <= 0.0)
+         {
+            ma60xTxt = "──────";
+            ma60xClr = COL_DIM;
+         }
+         else
+         {
+            double stdUnits  = dist / stdDevVal;
+            bool   extended  = (stdUnits > MA60_STD_Thresh);
+            string rsiGate   = extended
+               ? ("RSI≥" + DoubleToString(MA60_CT_RSI_Buy,0) + "/≤" + DoubleToString(MA60_CT_RSI_Sell,0))
+               : ("RSI≥" + DoubleToString(MA60_RSI_Buy,0)    + "/≤" + DoubleToString(MA60_RSI_Sell,0));
+            ma60xTxt = DoubleToString(stdUnits, 2) + "σ  " +
+                       (extended ? "EXTENDED [CT]" : "NORMAL [WT]") + "  " + rsiGate;
+            ma60xClr = extended ? COL_YELLOW : COL_GREEN;
+         }
+      }
+      SetLabel(PFX+"val_ma60x", ma60xTxt, ma60xClr);
+   }
+
    // Positions
    int buys  = CountPos(POSITION_TYPE_BUY);
    int sells = CountPos(POSITION_TYPE_SELL);
@@ -1806,91 +1876,59 @@ void UpdateDashboard()
 
    string plSign = (floatPL >= 0) ? "+" : "";
    color  plClr  = (floatPL >= 0) ? COL_GREEN : COL_RED;
-   SetLabel(PFX+"val_pnl", plSign + DoubleToString(floatPL, 2) + " " + cur, plClr);
+   SetLabel(PFX+"val_pnl", plSign + cur + " " + DoubleToString(floatPL, 2), plClr);
 
-   // SL-Flip armed alert
+   //--- GOAL TRACKER section ────────────────────────────────────────
+   if(!Goal_On)
+   {
+      SetLabel(PFX+"val_gmonth", "DISABLED", COL_DIM);
+      SetLabel(PFX+"val_gweek",  "DISABLED", COL_DIM);
+      SetLabel(PFX+"val_gday",   "DISABLED", COL_DIM);
+      SetLabel(PFX+"val_gtoday", "DISABLED", COL_DIM);
+   }
+   else
+   {
+      double monthPnL  = GoalMonthPnL();
+      double dailyTgt  = GoalDailyTarget();
+      double weekTgt   = dailyTgt * GoalDaysPerWeek();
+      double todayPnL  = GoalTodayPnL();
+
+      // Monthly — green when hit, yellow when >=80%, white otherwise
+      color mClr = (monthPnL >= Goal_Monthly)         ? COL_GREEN  :
+                   (monthPnL >= Goal_Monthly * 0.8)   ? COL_YELLOW : COL_WHITE;
+      SetLabel(PFX+"val_gmonth",
+         cur + " " + DoubleToString(monthPnL, 2) + " / " + DoubleToString(Goal_Monthly, 2),
+         mClr);
+
+      // Weekly target (daily × days-per-week)
+      SetLabel(PFX+"val_gweek",
+         dailyTgt > 0.0 ? ("Tgt: " + cur + " " + DoubleToString(weekTgt, 2)) : "──────",
+         COL_DIM);
+
+      // Daily target
+      color dClr = (dailyTgt <= 0.0)        ? COL_DIM   :
+                   (todayPnL >= dailyTgt)   ? COL_GREEN : COL_WHITE;
+      SetLabel(PFX+"val_gday",
+         dailyTgt > 0.0 ? (cur + " " + DoubleToString(dailyTgt, 2)) : "──────",
+         dClr);
+
+      // Today P&L — green if target hit, red if negative, white otherwise
+      color tClr = (dailyTgt > 0.0 && todayPnL >= dailyTgt) ? COL_GREEN :
+                   (todayPnL < 0.0)                          ? COL_RED   : COL_WHITE;
+      SetLabel(PFX+"val_gtoday",
+         cur + " " + (todayPnL >= 0.0 ? "+" : "") + DoubleToString(todayPnL, 2),
+         tClr);
+   }
+
+   //--- SL Flip arm alert row ───────────────────────────────────────
    if(SLFlip_On && slFlipPending)
    {
-      int barsLeft = SLFlip_Delay -
-                     (int)((iTime(_Symbol, PERIOD_CURRENT, 0) - slFlipBarTime) / PeriodSeconds(PERIOD_CURRENT));
-      barsLeft = MathMax(barsLeft, 0);
-      string flipTxt = "FLIP ARMED: " + (slFlipDir == 1 ? "BUY" : "SELL") +
-                       "  (" + IntegerToString(barsLeft) + " bars)";
+      string flipTxt = "FLIP ARMED — " + (slFlipDir == 1 ? "BUY" : "SELL") +
+                       " in " + IntegerToString(SLFlip_Delay) + " bars";
       SetLabel(PFX+"ft_flip", flipTxt, COL_YELLOW);
    }
    else
-   {
       SetLabel(PFX+"ft_flip", "", COL_DIM);
-   }
-
-   // ── GOAL TRACKER section ─────────────────────────────────────────
-   if(Goal_On)
-   {
-      string cur = AccountInfoString(ACCOUNT_CURRENCY);
-
-      // Current P&L figures
-      double monthPnL   = GoalMonthPnL();
-      double todayPnL   = GoalTodayPnL();
-      double dailyTgt   = GoalDailyTarget();
-      double weeklyTgt  = dailyTgt * GoalDaysPerWeek();
-      double remaining  = Goal_Monthly - monthPnL;
-
-      // Monthly row: "Target $500  Made $123.45"
-      string monthSign = (monthPnL >= 0) ? "+" : "";
-      string monthTxt  = "Tgt $" + DoubleToString(Goal_Monthly, 2) +
-                         "  Made " + monthSign + DoubleToString(monthPnL, 2);
-      color  monthClr  = (monthPnL >= Goal_Monthly) ? COL_GREEN :
-                         (monthPnL >= Goal_Monthly * 0.5) ? COL_YELLOW : COL_DIM;
-      SetLabel(PFX+"val_gmonth", monthTxt, monthClr);
-
-      // Weekly target row: "Wk $XX.XX  Left $XX.XX"
-      string weekTxt = "Wk $" + DoubleToString(weeklyTgt, 2) +
-                       "  Left $" + DoubleToString(MathMax(remaining, 0.0), 2);
-      SetLabel(PFX+"val_gweek", weekTxt, COL_DIM);
-
-      // Daily target row: "Day $XX.XX  [days left]d"
-      int dLeft = GoalTradingDaysRemaining(TimeCurrent());
-      string schedule = (Goal_Schedule == GOAL_7DAYS) ? "7d" : "5d";
-      string dayTxt = "Day $" + DoubleToString(MathMax(dailyTgt, 0.0), 2) +
-                      "  " + IntegerToString(dLeft) + " days (" + schedule + ")";
-      SetLabel(PFX+"val_gday", dayTxt, COL_DIM);
-
-      // Today row — coloured by progress vs daily target
-      string todaySign = (todayPnL >= 0) ? "+" : "";
-      string todayTxt;
-      color  todayClr;
-      if(dailyTgt <= 0.0)
-      {
-         // Monthly goal already exceeded — display as bonus
-         todayTxt = todaySign + DoubleToString(todayPnL, 2) + "  GOAL MET ✓";
-         todayClr = COL_GREEN;
-      }
-      else if(todayPnL >= dailyTgt)
-      {
-         todayTxt = todaySign + DoubleToString(todayPnL, 2) + "  TARGET HIT ✓";
-         todayClr = COL_GREEN;
-      }
-      else if(todayPnL >= dailyTgt * 0.5)
-      {
-         todayTxt = todaySign + DoubleToString(todayPnL, 2) +
-                    " / $" + DoubleToString(dailyTgt, 2) + "  ◈";
-         todayClr = COL_YELLOW;
-      }
-      else
-      {
-         todayTxt = todaySign + DoubleToString(todayPnL, 2) +
-                    " / $" + DoubleToString(dailyTgt, 2);
-         todayClr = COL_RED;
-      }
-      SetLabel(PFX+"val_gtoday", todayTxt, todayClr);
-   }
-   else
-   {
-      SetLabel(PFX+"val_gmonth", "DISABLED", COL_DIM);
-      SetLabel(PFX+"val_gweek",  "──────",   COL_DIM);
-      SetLabel(PFX+"val_gday",   "──────",   COL_DIM);
-      SetLabel(PFX+"val_gtoday", "──────",   COL_DIM);
-   }
 
    ChartRedraw();
 }
@@ -1900,34 +1938,12 @@ void UpdateDashboard()
 //====================================================================
 void DeleteDashboard()
 {
-   for(int i = ObjectsTotal(0) - 1; i >= 0; i--)
-   {
-      string nm = ObjectName(0, i);
-      if(StringSubstr(nm, 0, StringLen(PFX)) == PFX)
-         ObjectDelete(0, nm);
-   }
+   ObjectsDeleteAll(0, PFX);
 }
 
 //====================================================================
-//  HELPER STRINGS
+//  HELPER STRINGS FOR SETTINGS FOOTER
 //====================================================================
-string GetTFStr()
-{
-   switch((int)PERIOD_CURRENT)
-   {
-      case PERIOD_M1:  return "M1";
-      case PERIOD_M5:  return "M5";
-      case PERIOD_M15: return "M15";
-      case PERIOD_M30: return "M30";
-      case PERIOD_H1:  return "H1";
-      case PERIOD_H4:  return "H4";
-      case PERIOD_D1:  return "D1";
-      case PERIOD_W1:  return "W1";
-      case PERIOD_MN1: return "MN";
-      default:         return "??";
-   }
-}
-
 string GetDirStr()
 {
    if(TradeDir == DIR_BUY_ONLY)  return "BUY";
@@ -1938,14 +1954,30 @@ string GetDirStr()
 string GetLotStr()
 {
    if(LotMode == LOT_FIXED)
-      return DoubleToString(FixedLot, 2) + " FX";
-   return DoubleToString(EquityPct, 1) + "% EQ";
+      return "Fix " + DoubleToString(FixedLot, 2);
+   return DoubleToString(EquityPct, 1) + "%Eq";
 }
 
 string GetTPSLStr()
 {
-   return (TPSL_Mode == TPSL_STATIC) ? "STATIC" : "DYNAMIC";
+   if(TPSL_Mode == TPSL_STATIC)
+      return "S " + IntegerToString(SL_Pts) + "/" + IntegerToString(TP_Pts);
+   return "D " + DoubleToString(RR_Ratio, 1) + "RR";
 }
-//+------------------------------------------------------------------+
-//  END OF FILE
-//+------------------------------------------------------------------+
+
+string GetTFStr()
+{
+   switch(Period())
+   {
+      case PERIOD_M1:  return "M1";
+      case PERIOD_M5:  return "M5";
+      case PERIOD_M15: return "M15";
+      case PERIOD_M30: return "M30";
+      case PERIOD_H1:  return "H1";
+      case PERIOD_H4:  return "H4";
+      case PERIOD_D1:  return "D1";
+      case PERIOD_W1:  return "W1";
+      case PERIOD_MN1: return "MN";
+      default:         return EnumToString(Period());
+   }
+}
