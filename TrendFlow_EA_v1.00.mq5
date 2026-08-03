@@ -164,12 +164,12 @@ input int               MA60_Shift      = 5;           // LWMA Shift (bars forwa
 input double            MA60_ADX_Min    = 20.0;        // Min ADX for MA60 entries
 input double            MA60_RSI_Buy    = 55.0;        // RSI must be >= this for BUY  (bullish momentum)
 input double            MA60_RSI_Sell   = 45.0;        // RSI must be <= this for SELL (bearish momentum)
-input double            MA60_STD_Thresh  = 1.0;        // MA distance threshold in STD: <= = with-trend, > = counter-trend
+input double            MA60_STD_Thresh  = 1.0;        // Price-EMA200 distance threshold in STD: <= = with-trend, > = counter-trend
 input double            MA60_CT_RSI_Buy  = 40.0;       // Counter-trend BUY min RSI  (recovering from oversold)
 input double            MA60_CT_RSI_Sell = 60.0;       // Counter-trend SELL max RSI (declining from overbought)
 // StdDev period is fixed at 20 bars (recent volatility measure).
-// When |MA60 - EMA200| <= MA60_STD_Thresh * StdDev(20) → MAs are in normal range → MA60 enters WITH the trend.
-// When |MA60 - EMA200| >  MA60_STD_Thresh * StdDev(20) → MAs are overextended   → MA60 flips to counter-trend early entries.
+// When |Price - EMA200| <= MA60_STD_Thresh * StdDev(20) → price in normal range  → MA60 enters WITH the trend.
+// When |Price - EMA200| >  MA60_STD_Thresh * StdDev(20) → price overextended     → MA60 flips to counter-trend early entries.
 // With-trend RSI gates  : BUY RSI >= MA60_RSI_Buy (55+) | SELL RSI <= MA60_RSI_Sell (45-)
 // Counter-trend RSI gates: BUY RSI >= MA60_CT_RSI_Buy (40+) | SELL RSI <= MA60_CT_RSI_Sell (60-)
 //   Rationale: in CT mode price is pulling back from an extreme — RSI won't have reached
@@ -809,7 +809,7 @@ void OnTick()
       bool ma60SellCross = (c2 > ma60_2 && c1 <= ma60_1);  // price crossed below LWMA-60
 
       // EMA-200 dynamic filter — compute extension state FIRST so RSI can branch on it.
-      // maDistance = |LWMA-60 - EMA-200| in price.
+      // pxDistance = |Price - EMA-200| in price units (how far current price has stretched from EMA).
       // If distance <= MA60_STD_Thresh * StdDev → NORMAL range → MA60 enters WITH the trend:
       //     BUY  when price above EMA-200 | SELL when price below EMA-200.
       // If distance >  MA60_STD_Thresh * StdDev → OVEREXTENDED → MA60 flips to counter-trend:
@@ -817,8 +817,8 @@ void OnTick()
       //     SELL when price above EMA-200 (early bearish reversal).
       // TradeDir still gates which side is permitted to fire.
       double ma60StdDev   = (ArraySize(bufStdDev) >= 2) ? bufStdDev[1] : 0.0;
-      double maDistance   = MathAbs(ma60_1 - ema1);
-      bool   ma60Extended = (ma60StdDev > 0.0) && (maDistance > MA60_STD_Thresh * ma60StdDev);
+      double pxDistance   = MathAbs(c1 - ema1);
+      bool   ma60Extended = (ma60StdDev > 0.0) && (pxDistance > MA60_STD_Thresh * ma60StdDev);
 
       bool ma60EmaOkBuy  = ma60Extended ? (c1 < ema1) : (c1 > ema1);
       bool ma60EmaOkSell = ma60Extended ? (c1 > ema1) : (c1 < ema1);
@@ -1565,8 +1565,8 @@ void BuildDashboard()
    MakeLabel(PFX+"lbl_body",  x+p,    y+157, "Body",      COL_DIM,  8);
    MakeLabel(PFX+"val_body",  x+p+90, y+157, "──────",    COL_DIM,  8, "Segoe UI Semibold");
 
-   // MA60 Extension row
-   MakeLabel(PFX+"lbl_ma60x", x+p,    y+172, "MA60 Ext",  COL_DIM,  8);
+   // Price Extension row (Price vs EMA-200 distance in STD units)
+   MakeLabel(PFX+"lbl_ma60x", x+p,    y+172, "PX Ext",    COL_DIM,  8);
    MakeLabel(PFX+"val_ma60x", x+p+90, y+172, "──────",    COL_DIM,  8, "Segoe UI Semibold");
 
    MakeRect(PFX+"sep1", x, y+187, w, 1, COL_SEP);
@@ -1818,7 +1818,7 @@ void UpdateDashboard()
       SetLabel(PFX+"val_body", bodyTxt, bodyClr);
    }
 
-   // MA60 Extension row — shows MA separation in StdDev units and mode active
+   // PX Ext row — shows Price-to-EMA200 separation in StdDev units and active mode
    {
       string ma60xTxt; color ma60xClr;
       if(!MA60_On)
@@ -1829,7 +1829,7 @@ void UpdateDashboard()
       else
       {
          double stdDevVal  = (ArraySize(bufStdDev) >= 2) ? bufStdDev[1] : 0.0;
-         double dist       = MathAbs(ma60_1 - ema1);
+         double dist       = MathAbs(c1 - ema1);    // price-to-EMA200 (matches entry engine logic)
          if(stdDevVal <= 0.0)
          {
             ma60xTxt = "──────";
