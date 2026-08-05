@@ -742,12 +742,13 @@ void OnTick()
       bool revCooldownOk = (barsSinceRev >= Rev_Cooldown);
 
       // --- REVERSAL BUY ---
+      // noOpposite is intentionally NOT applied here — reversal entries are counter-trend by design.
+      // An open sell position when price hits the lower band is the expected scenario, not a blocker.
       if(envBuySignal && envAdxOk && revCooldownOk && rsiRevBuyOk && TradeDir != DIR_SELL_ONLY)
       {
          int  existingBuys = CountPos(POSITION_TYPE_BUY);
          bool adxPass      = (existingBuys == 0) ? envAdxOk : envAdxSustained;
-         bool noOpposite   = (TradeDir == DIR_BOTH) ? (CountPos(POSITION_TYPE_SELL) == 0) : true;
-         if(adxPass && noOpposite && existingBuys < MaxEntries)
+         if(adxPass && existingBuys < MaxEntries)
          {
             double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
             // Static SL/TP — always use configured point values for reversals
@@ -767,12 +768,13 @@ void OnTick()
       }
 
       // --- REVERSAL SELL ---
+      // noOpposite is intentionally NOT applied here — reversal entries are counter-trend by design.
+      // An open buy position when price hits the upper band is the expected scenario, not a blocker.
       if(envSellSignal && envAdxOk && revCooldownOk && rsiRevSellOk && TradeDir != DIR_BUY_ONLY)
       {
          int  existingSells = CountPos(POSITION_TYPE_SELL);
          bool adxPass       = (existingSells == 0) ? envAdxOk : envAdxSustained;
-         bool noOpposite    = (TradeDir == DIR_BOTH) ? (CountPos(POSITION_TYPE_BUY) == 0) : true;
-         if(adxPass && noOpposite && existingSells < MaxEntries)
+         if(adxPass && existingSells < MaxEntries)
          {
             double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
             // Static SL/TP — always use configured point values for reversals
