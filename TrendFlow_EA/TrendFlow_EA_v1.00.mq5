@@ -1,4 +1,4 @@
-﻿//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
 //|                                            TrendFlow_EA.mq5      |
 //|                                       TrendFlow EA  –  v4.0      |
 //|  Strategy  : 200 EMA crossover trigger  +  ADX  +  Body filter   |
@@ -145,13 +145,20 @@ input int               Rev_Cooldown    = 5;            // Bars to wait between 
 
 // ── RSI ───────────────────────────────────────────────────────────
 input group             "── RSI ─────────────────────────────────────────────"
-input bool              RSI_Rev_On      = false;       // RSI confluence for Reversal entries
+input bool              RSI_Rev_On      = false;       // Enable RSI confluence tracking for Reversal entries
+input bool              Rev_RSI_Gate    = false;       // Make RSI a hard BLOCK on Reversal entries (requires RSI_Rev_On)
 input bool              RSI_Cross_On    = false;       // RSI confluence for Crossover/Retry entries
 input int               RSI_Period      = 20;          // RSI Period
 input double            RSI_OB_Zone     = 80.0;        // Overbought extreme zone (SELL reversal)
 input double            RSI_OB_Return   = 70.0;        // RSI crosses back below this → SELL confirmed
 input double            RSI_OS_Zone     = 20.0;        // Oversold extreme zone (BUY reversal)
 input double            RSI_OS_Return   = 30.0;        // RSI crosses back above this → BUY confirmed
+// RSI_Rev_On  : Computes RSI return-from-extreme confluence and logs/displays it.
+//               When OFF, reversal entries fire on band-touch + ADX alone.
+// Rev_RSI_Gate: Requires RSI_Rev_On=true. When ON, RSI is a HARD gate — reversal
+//               entries are BLOCKED unless RSI return condition is satisfied.
+//               When OFF (default), RSI confluence is informational only — it is
+//               logged to the CSV and shown in dashboard but never prevents an entry.
 // Reversal  : RSI[2] <= RSI_OS_Zone AND RSI[1] > RSI_OS_Return  (returning from oversold → BUY)
 //             RSI[2] >= RSI_OB_Zone AND RSI[1] < RSI_OB_Return  (returning from overbought → SELL)
 // Crossover : RSI[1] > 50 required for BUY entries | RSI[1] < 50 required for SELL entries
@@ -485,9 +492,13 @@ void OnTick()
    // Crossover gate : RSI above/below 50 at signal bar
    bool rsiOkBuy   = !RSI_Cross_On || (rsi1 > 50.0);
    bool rsiOkSell  = !RSI_Cross_On || (rsi1 < 50.0);
-   // Reversal gate  : RSI returning from extreme zone (prior bar was extreme, signal bar has crossed back)
-   bool rsiRevBuyOk  = !RSI_Rev_On || (rsi2 <= RSI_OS_Zone && rsi1 > RSI_OS_Return);
-   bool rsiRevSellOk = !RSI_Rev_On || (rsi2 >= RSI_OB_Zone && rsi1 < RSI_OB_Return);
+   // Reversal RSI confluence — always computed when RSI_Rev_On is true.
+   // rsiRevConfBuy/Sell: pure signal — is the RSI return condition met? (display + log)
+   // rsiRevBuyOk/SellOk: hard gate — only blocks entry when BOTH RSI_Rev_On AND Rev_RSI_Gate are true.
+   bool rsiRevConfBuyOk  = (rsi2 <= RSI_OS_Zone && rsi1 > RSI_OS_Return);  // RSI returning from oversold
+   bool rsiRevConfSellOk = (rsi2 >= RSI_OB_Zone && rsi1 < RSI_OB_Return);  // RSI returning from overbought
+   bool rsiRevBuyOk  = !RSI_Rev_On || !Rev_RSI_Gate || rsiRevConfBuyOk;
+   bool rsiRevSellOk = !RSI_Rev_On || !Rev_RSI_Gate || rsiRevConfSellOk;
 
    // --- Raw crossover (body filter applied, ADX not yet checked) ---
    bool rawBuyCross  = (c2 < emap && c1 > ema1);
@@ -760,8 +771,12 @@ void OnTick()
                siLastPrice[0]  = ask;
                siCount[0]      = 0;
                revLastEntryBar = curBarTime;
+               string rsiNote = RSI_Rev_On
+                  ? (rsiRevConfBuyOk ? " | RSI confluence ✓" : " | RSI confluence ✗ (not gated)")
+                  : "";
                Print("TrendFlow: BUY reversal — lower band wick + ADX=",
-                     DoubleToString(adx1, 1), "  Lot=", lot, " SL=", sl, " TP=", tp);
+                     DoubleToString(adx1, 1), rsiNote,
+                     "  Lot=", lot, " SL=", sl, " TP=", tp);
                LogTradeEntry("REVERSAL", ORDER_TYPE_BUY, ask, sl, tp, lot);
             }
          }
@@ -786,8 +801,12 @@ void OnTick()
                siLastPrice[1]  = bid;
                siCount[1]      = 0;
                revLastEntryBar = curBarTime;
+               string rsiNote = RSI_Rev_On
+                  ? (rsiRevConfSellOk ? " | RSI confluence ✓" : " | RSI confluence ✗ (not gated)")
+                  : "";
                Print("TrendFlow: SELL reversal — upper band wick + ADX=",
-                     DoubleToString(adx1, 1), "  Lot=", lot, " SL=", sl, " TP=", tp);
+                     DoubleToString(adx1, 1), rsiNote,
+                     "  Lot=", lot, " SL=", sl, " TP=", tp);
                LogTradeEntry("REVERSAL", ORDER_TYPE_SELL, bid, sl, tp, lot);
             }
          }
