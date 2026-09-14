@@ -29,8 +29,9 @@
 9. [Trade Entry Logger](#trade-entry-logger)
 10. [Live Dashboard](#live-dashboard)
 11. [Installation](#installation)
-12. [Recommended Workflows](#recommended-workflows)
-13. [Notes & Caveats](#notes--caveats)
+12. [Loading Preset Templates](#loading-preset-templates)
+13. [Recommended Workflows](#recommended-workflows)
+14. [Notes & Caveats](#notes--caveats)
 
 ---
 
@@ -544,6 +545,53 @@ When an SL-Flip is armed, a `FLIP ARMED: BUY (N bars)` alert appears in the SETT
 5. Ensure **AutoTrading is enabled** in the MT5 toolbar.
 
 > **Tip:** Run on a **Demo account** first to validate behaviour on your broker's execution environment before going live.
+
+---
+
+## Loading Preset Templates
+
+The `PreSettingTemplates/` folder contains ready-made **MT5 chart templates** (`.tpl` files) with the EA and all indicators pre-configured for common setups. Applying a template is the fastest way to get started.
+
+### Available Presets
+
+| File | Intended Use |
+|------|--------------|
+| `Trend_Flow_EURUSD.tpl` | Baseline settings optimised for EURUSD |
+| `Trend_Flow_EURGBP.tpl` | Baseline settings optimised for EURGBP |
+| `Trend_Flow_Gold.tpl` | Settings tuned for XAUUSD (Gold) volatility |
+| `Trend_Flow_RB-100.tpl` | Reversal + Break-Even preset (100-point SL) |
+| `Trend_Flow_SI-300.tpl` | Scale-In preset — 300-point step |
+| `Trend_Flow_SI-500.tpl` | Scale-In preset — 500-point step |
+| `TrendFlow_EA_EURUSD.tpl` | Full EURUSD template with chart layout |
+| `TrendFlow_EA_USDCHF.tpl` | Full USDCHF template with chart layout |
+
+### Step-by-Step: Applying a Preset Template
+
+1. **Copy the `.tpl` file** to your MT5 templates folder:
+   ```
+   <MT5 Data Folder>\MQL5\Profiles\Templates\
+   ```
+   > To find your MT5 Data Folder: in MT5 go to **File → Open Data Folder**.
+
+2. **Copy the compiled EA** `TrendFlow_EA_v1.00.ex5` to:
+   ```
+   <MT5 Data Folder>\MQL5\Experts\
+   ```
+   (This step is only needed if you haven't completed the Installation above.)
+
+3. **Open the chart** you want to trade on (e.g. EURUSD, H1).
+
+4. **Apply the template** via one of two methods:
+   - **Right-click** anywhere on the chart → **Template** → **Load Template…** → select the `.tpl` file, **or**
+   - In the MT5 menu: **Charts → Template → Load Template…** → select the `.tpl` file.
+
+5. The template will load the EA, all indicator settings, and chart colours in one step. The EA input dialog **will not appear** automatically — the settings are already embedded in the template.
+
+6. **Verify the EA is running:** a smiley-face icon (🙂) should appear in the top-right corner of the chart. If a frowning face (🙁) appears, right-click the EA name in the Navigator → **Attach to a Chart**, then enable **"Allow Algorithmic Trading"** in the EA properties.
+
+7. Ensure **AutoTrading is enabled** in the MT5 toolbar (the green "AutoTrading" button must be active).
+
+> **Note:** If you want to tweak settings after loading a template, double-click the EA's smiley icon on the chart (or press `F7`) to open the input dialog.
 
 ---
 
