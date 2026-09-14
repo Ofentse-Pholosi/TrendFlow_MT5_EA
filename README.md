@@ -527,6 +527,10 @@ When an SL-Flip is armed, a `FLIP ARMED: BUY (N bars)` alert appears in the SETT
 
 ## Installation
 
+> [!IMPORTANT]
+> **Recommended Broker:** This EA is primarily set up and optimised for **[Deriv](https://deriv.com)**. The recommended account type is Deriv's **Zero Spread** account — low/zero spread conditions are critical for the EA's point-based SL/TP and trailing stop calculations to work as intended.
+> As an alternative, **[XM](https://www.xm.com)** can also be used. If using XM, prefer a **Zero** or **Ultra Low** account type to minimise spread impact on entries and stops.
+
 1. **Copy the compiled file** `TrendFlow_EA_v1.00.ex5` to your MT5 data folder:
    ```
    <MT5 Data Folder>\MQL5\Experts\
@@ -627,6 +631,7 @@ The `PreSettingTemplates/` folder contains ready-made **MT5 chart templates** (`
 
 ## Notes & Caveats
 
+- **Recommended Broker:** This EA is optimised for **Deriv** using a **Zero Spread** account. Alternatively, **XM** (Zero or Ultra Low account) is supported. High-spread or variable-spread accounts will adversely affect the point-based SL/TP distances and trailing stop accuracy.
 - **Slippage:** The EA uses `ORDER_FILLING_IOC` with 10-point deviation. Adjust in the source for different broker conditions if required.
 - **Multiple Symbols:** Run one EA instance per symbol. Use a unique `Magic` number for each instance to prevent cross-symbol position interference.
 - **Reversal entries are counter-trend** and carry higher inherent risk. Intended for experienced users comfortable with mean-reversion strategies.
